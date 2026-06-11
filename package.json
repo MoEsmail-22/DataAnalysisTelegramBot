@@ -1,0 +1,16 @@
+{
+  "name": "telegram-excel-postgres-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot that imports Excel rows into PostgreSQL and lets users query by phone or ID.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "pg": "^8.13.1",
+    "xlsx": "^0.18.5"
+  }
+}
