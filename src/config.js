@@ -8,23 +8,23 @@ const adminIds = new Set(
 const keyboard = {
   reply_markup: {
     keyboard: [
-      [{ text: "Search" }, { text: "Import Excel" }],
-      [{ text: "Stats" }, { text: "Help" }],
+      [{ text: "بحث" }, { text: "رفع Excel" }],
+      [{ text: "إحصائيات" }, { text: "مساعدة" }],
     ],
     resize_keyboard: true,
     is_persistent: true,
     one_time_keyboard: false,
-    input_field_placeholder: "Choose a shortcut or type phone/ID",
+    input_field_placeholder: "اكتب رقم الهاتف أو اسم العميل",
   },
 };
 
 const commands = [
-  { command: "start", description: "Open the bot menu" },
-  { command: "help", description: "Show commands and shortcuts" },
-  { command: "myid", description: "Show your Telegram user ID" },
-  { command: "import", description: "How to upload an Excel file" },
-  { command: "search", description: "Search customer by phone, ID, or name" },
-  { command: "stats", description: "Show sales database totals" },
+  { command: "start", description: "فتح القائمة" },
+  { command: "help", description: "عرض المساعدة" },
+  { command: "myid", description: "إظهار رقم حسابك" },
+  { command: "import", description: "رفع ملف Excel" },
+  { command: "search", description: "بحث برقم الهاتف أو الاسم" },
+  { command: "stats", description: "إحصائيات البيانات" },
 ];
 
 module.exports = {

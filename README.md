@@ -1,25 +1,31 @@
-# Telegram Excel PostgreSQL Bot
+# Telegram Arabic Customer Data Bot
 
-This is a clean Node.js structure for the bot you described:
+Telegram bot for importing the main Arabic Excel customer file into Supabase/PostgreSQL and searching customer delivery data by phone number or name.
 
-- Telegram bot receives sales Excel files.
-- Excel rows are parsed with SheetJS.
-- Data is inserted into PostgreSQL/Supabase.
-- Users can search customer sales summaries by phone, ID, or name.
+## What It Stores
 
-## Setup
+Each customer can have:
 
-1. Revoke the leaked Telegram token in BotFather and generate a new one.
-2. Copy `.env.example` to `.env`.
-3. Put your real values in `.env`.
+- Arabic customer name
+- Up to 3 phone numbers
+- Governorate
+- Zone
+- Area
+- Up to 3 addresses
+- Notes
+- Full original row stored in `raw_data`
+
+The bot replies in Arabic.
+
+## Environment
+
+Create `.env` locally, or add these environment variables in your hosting dashboard:
 
 ```env
 BOT_TOKEN=your_new_bot_token
-DATABASE_URL=postgresql://postgres:password@host:5432/postgres
+DATABASE_URL=your_supabase_postgres_connection_string
 ADMIN_IDS=123456789,987654321
 ```
-
-Use the Supabase PostgreSQL connection string, not the REST API URL.
 
 `ADMIN_IDS` is a comma-separated list of Telegram user IDs. Admins can upload Excel files and view stats. Normal users can search only.
 
@@ -31,88 +37,49 @@ npm install
 
 ## Database
 
-Run `schema.sql` in Supabase SQL Editor or your PostgreSQL client.
+Run `schema.sql` in Supabase SQL Editor before importing the Excel file.
 
-## Start
+## Start Locally
 
 ```bash
 npm start
 ```
 
-## Deploy Without A Card: Vercel Webhook
-
-Vercel does not keep `npm start` running forever, so production deployment uses Telegram webhook mode through `api/webhook.js`.
-
-1. Deploy this repo on Vercel as a Node.js project.
-2. If you use the Vercel CLI, install the Vercel plugin:
-
-```bash
-npx plugins add vercel/vercel-plugin
-```
-
-3. Add these environment variables in Vercel:
-
-```env
-BOT_TOKEN=your_new_bot_token
-DATABASE_URL=your_supabase_postgres_connection_string
-ADMIN_IDS=123456789,987654321
-```
-
-4. After deployment, copy your Vercel URL and set the Telegram webhook:
-
-```bash
-WEBHOOK_URL=https://data-analysis-telegram-bfoooyxu3-moesmail-22s-projects.vercel.app/api/webhook npm run set-webhook
-```
-
-On Windows PowerShell:
-
-```powershell
-$env:WEBHOOK_URL="https://data-analysis-telegram-bfoooyxu3-moesmail-22s-projects.vercel.app/api/webhook"; npm run set-webhook
-```
-
-5. Stop the local polling bot with `Ctrl + C`.
-
 ## Bot Commands
 
-- `/start` - open the bot menu
-- `/help` - show commands and shortcuts
-- `/myid` - show your Telegram user ID
-- `/import` - explain how to upload an Excel file
-- `/search phone_id_or_name` - show a customer sales summary
-- `/stats` - show sales record, customer, and amount totals
+- `/start` - فتح القائمة
+- `/help` - عرض المساعدة
+- `/myid` - إظهار رقم حسابك
+- `/import` - رفع ملف Excel
+- `/search phone_or_name` - بحث برقم الهاتف أو الاسم
+- `/stats` - إحصائيات البيانات
 
-The bot also shows shortcut buttons for Search, Import Excel, Stats, and Help.
+The bot also shows Arabic shortcut buttons:
 
-## Admin Setup
-
-1. Start the bot.
-2. Send `/myid` from your Telegram account.
-3. Copy the number into `.env`.
-
-```env
-ADMIN_IDS=123456789
-```
-
-For multiple admins:
-
-```env
-ADMIN_IDS=123456789,987654321
-```
-
-Restart the bot after changing `.env`.
+- بحث
+- رفع Excel
+- إحصائيات
+- مساعدة
 
 ## Excel Columns
 
-The parser accepts common column names:
+The production Excel file uses these columns:
 
-- Customer name: `customer_name`, `name`, `full_name`, `client_name`
-- Phone: `phone`, `phone_number`, `customer_phone`, `mobile`, `mobile_number`, `telephone`
-- Address: `address`, `customer_address`, `location`
-- Purchase: `purchase`, `purchases`, `product`, `item`, `service`
-- Purchase date: `purchase_date`, `date_of_purchase`, `date`, `order_date`
-- Transactions: `number_of_transactions`, `transactions`, `transaction_count`
-- Quantity: `quantity`, `qty`, `qouinity`
-- Amount: `amount`, `total`, `price`, `value`, `paid`
-- ID: `id`, `customer_id`, `client_id`, `code`
+- `الهاتف 001` - main phone number, used as the primary update key
+- `اسم العميل` - customer name
+- `الهاتف 0012` - duplicate-check phone column
+- `الهاتف 002` - second phone number
+- `الهاتف 003` - third phone number
+- `المحافظة` - governorate
+- `Zone` - zone
+- `Area` - area
+- `العنوان` - first address
+- `العنوان 02` - second address
+- `العنوان 03` - third address
+- `ملحوظة` - notes
 
-You can add your exact Excel headers in `src/excel.js`.
+The first numeric header row in the workbook is ignored automatically. The parser detects the Arabic header row.
+
+## Deployment
+
+For hosting platforms such as `cloud.tranger.xyz`, push the latest code to GitHub, then redeploy/restart the bot from the hosting dashboard. Make sure the hosting environment variables match the `.env` values above.

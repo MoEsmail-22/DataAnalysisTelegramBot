@@ -1,20 +1,31 @@
-create table if not exists sales_records (
+create table if not exists customer_profiles (
   id bigserial primary key,
-  source_hash text unique not null,
-  external_id text,
+  source_hash text not null,
   customer_name text,
-  phone text,
-  address text,
-  purchase_name text,
-  purchase_date date,
-  transaction_count integer not null default 1,
-  quantity numeric,
-  amount numeric,
+  primary_phone text unique,
+  duplicate_check_phone text,
+  phones text[] not null default '{}',
+  governorate text,
+  zone text,
+  area text,
+  addresses text[] not null default '{}',
+  notes text,
   raw_data jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
-create index if not exists sales_records_phone_idx on sales_records (phone);
-create index if not exists sales_records_external_id_idx on sales_records (external_id);
-create index if not exists sales_records_customer_name_idx on sales_records (customer_name);
-create index if not exists sales_records_purchase_date_idx on sales_records (purchase_date);
+create index if not exists customer_profiles_phones_gin_idx
+  on customer_profiles using gin (phones);
+
+create index if not exists customer_profiles_addresses_gin_idx
+  on customer_profiles using gin (addresses);
+
+create index if not exists customer_profiles_customer_name_idx
+  on customer_profiles (customer_name);
+
+create index if not exists customer_profiles_zone_idx
+  on customer_profiles (zone);
+
+create index if not exists customer_profiles_area_idx
+  on customer_profiles (area);

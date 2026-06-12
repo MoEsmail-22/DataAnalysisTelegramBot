@@ -2,17 +2,17 @@ const fs = require("fs/promises");
 const os = require("os");
 const path = require("path");
 const {
-  countSalesRecords,
-  findCustomerSummary,
-  insertSalesRecord,
+  countCustomerProfiles,
+  findCustomerProfile,
+  upsertCustomerProfile,
 } = require("./db");
-const { parseSalesRecordsFromExcel } = require("./excel");
+const { normalizePhone, parseCustomerProfilesFromExcel } = require("./excel");
 const { adminIds, keyboard } = require("./config");
 const {
-  formatCustomerSummary,
-  formatMoney,
+  formatCustomerProfile,
   helpText,
   importHelpText,
+  statsText,
 } = require("./messages");
 
 function isAdmin(msg) {
@@ -31,9 +31,9 @@ async function requireAdmin(bot, msg) {
   await bot.sendMessage(
     msg.chat.id,
     [
-      "Admin access required.",
-      `Your Telegram ID is: ${msg.from?.id}`,
-      "Ask the bot owner to add it to ADMIN_IDS in .env.",
+      "هذا الأمر متاح للأدمن فقط.",
+      `رقم حسابك في تيليجرام: ${msg.from?.id}`,
+      "اطلب من صاحب البوت إضافته في ADMIN_IDS.",
     ].join("\n"),
     keyboard,
   );
@@ -41,31 +41,24 @@ async function requireAdmin(bot, msg) {
 }
 
 async function sendStats(bot, chatId) {
-  const stats = await countSalesRecords();
-  await bot.sendMessage(
-    chatId,
-    [
-      `Sales records: ${stats.total_records}`,
-      `Customers: ${stats.total_customers}`,
-      `Total amount: ${formatMoney(stats.total_amount)}`,
-    ].join("\n"),
-    keyboard,
-  );
+  const stats = await countCustomerProfiles();
+  await bot.sendMessage(chatId, statsText(stats), keyboard);
 }
 
 async function searchAndReply(bot, chatId, query) {
-  const summary = await findCustomerSummary(query);
+  const normalizedQuery = normalizePhone(query) || query;
+  const profile = await findCustomerProfile(normalizedQuery);
 
-  if (!summary) {
+  if (!profile) {
     await bot.sendMessage(
       chatId,
-      "No sales data found for that phone, ID, or name.",
+      "لا توجد بيانات لهذا الرقم أو الاسم.",
       keyboard,
     );
     return;
   }
 
-  await bot.sendMessage(chatId, formatCustomerSummary(summary), keyboard);
+  await bot.sendMessage(chatId, formatCustomerProfile(profile), keyboard);
 }
 
 function registerHandlers(bot, options = {}) {
@@ -102,7 +95,7 @@ function registerHandlers(bot, options = {}) {
     if (!query) {
       await bot.sendMessage(
         chatId,
-        "Send /search followed by a phone, ID, or name.",
+        "اكتب /search ثم رقم الهاتف أو اسم العميل.",
         keyboard,
       );
       return;
@@ -131,7 +124,7 @@ function registerHandlers(bot, options = {}) {
       console.error(error);
       await bot.sendMessage(
         msg.chat.id,
-        "Could not load stats. Check the server logs.",
+        "تعذر تحميل الإحصائيات. راجع سجلات السيرفر.",
         keyboard,
       );
     }
@@ -150,7 +143,7 @@ function registerHandlers(bot, options = {}) {
     if (![".xlsx", ".xls", ".csv"].includes(ext)) {
       await bot.sendMessage(
         chatId,
-        "Please upload an Excel file: .xlsx, .xls, or .csv",
+        "من فضلك ارفع ملف Excel بصيغة .xlsx أو .xls أو .csv",
         keyboard,
       );
       return;
@@ -161,38 +154,35 @@ function registerHandlers(bot, options = {}) {
     let downloadedPath;
     try {
       downloadedPath = await bot.downloadFile(document.file_id, downloadsDir);
-      const records = parseSalesRecordsFromExcel(downloadedPath);
+      const profiles = parseCustomerProfilesFromExcel(downloadedPath);
 
-      if (records.length === 0) {
+      if (profiles.length === 0) {
         await bot.sendMessage(
           chatId,
-          "No usable rows found. Make sure the file has customer, phone, or sales columns.",
+          "لم يتم العثور على صفوف صالحة. تأكد من وجود أعمدة الهاتف واسم العميل والعنوان.",
           keyboard,
         );
         return;
       }
 
-      let imported = 0;
-      let skipped = 0;
-      for (const record of records) {
-        const inserted = await insertSalesRecord(record);
-        if (inserted) {
-          imported += 1;
-        } else {
-          skipped += 1;
-        }
+      let inserted = 0;
+      let updated = 0;
+      for (const profile of profiles) {
+        const result = await upsertCustomerProfile(profile);
+        if (result === "inserted") inserted += 1;
+        if (result === "updated") updated += 1;
       }
 
       await bot.sendMessage(
         chatId,
-        `Imported ${imported} sales row(s). Skipped ${skipped} duplicate row(s).`,
+        `تم استيراد ${inserted} عميل جديد وتحديث ${updated} عميل.`,
         keyboard,
       );
     } catch (error) {
       console.error(error);
       await bot.sendMessage(
         chatId,
-        "Import failed. Check the server logs for details.",
+        "فشل الاستيراد. راجع سجلات السيرفر للتفاصيل.",
         keyboard,
       );
     } finally {
@@ -211,12 +201,12 @@ function registerHandlers(bot, options = {}) {
     }
 
     try {
-      if (/^help$/i.test(text)) {
+      if (/^(help|مساعدة)$/i.test(text)) {
         await bot.sendMessage(chatId, helpText(), keyboard);
         return;
       }
 
-      if (/^import excel$/i.test(text)) {
+      if (/^(import excel|رفع excel)$/i.test(text)) {
         if (!(await requireAdmin(bot, msg))) {
           return;
         }
@@ -225,16 +215,16 @@ function registerHandlers(bot, options = {}) {
         return;
       }
 
-      if (/^search$/i.test(text)) {
+      if (/^(search|بحث)$/i.test(text)) {
         await bot.sendMessage(
           chatId,
-          "Send the phone, ID, or customer name you want to search.",
+          "اكتب رقم الهاتف أو اسم العميل الذي تريد البحث عنه.",
           keyboard,
         );
         return;
       }
 
-      if (/^stats$/i.test(text)) {
+      if (/^(stats|إحصائيات)$/i.test(text)) {
         if (!(await requireAdmin(bot, msg))) {
           return;
         }
@@ -248,7 +238,7 @@ function registerHandlers(bot, options = {}) {
       console.error(error);
       await bot.sendMessage(
         chatId,
-        "Search failed. Check the server logs for details.",
+        "فشل البحث. راجع سجلات السيرفر للتفاصيل.",
         keyboard,
       );
     }
