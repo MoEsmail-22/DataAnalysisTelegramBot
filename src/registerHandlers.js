@@ -7,7 +7,7 @@ const {
   upsertCustomerProfile,
 } = require("./db");
 const { normalizePhone, parseCustomerProfilesFromExcel } = require("./excel");
-const { adminIds, keyboard } = require("./config");
+const { adminIds, allowedUserIds, keyboard } = require("./config");
 const {
   formatCustomerProfile,
   helpText,
@@ -21,6 +21,18 @@ function isAdmin(msg) {
   }
 
   return adminIds.has(String(msg.from?.id));
+}
+
+function isAllowedUser(msg) {
+  if (isAdmin(msg)) {
+    return true;
+  }
+
+  if (allowedUserIds.size === 0) {
+    return false;
+  }
+
+  return allowedUserIds.has(String(msg.from?.id));
 }
 
 async function requireAdmin(bot, msg) {
@@ -38,6 +50,39 @@ async function requireAdmin(bot, msg) {
     keyboard,
   );
   return false;
+}
+
+async function requireAllowedUser(bot, msg) {
+  if (isAllowedUser(msg)) {
+    return true;
+  }
+
+  await bot.sendMessage(
+    msg.chat.id,
+    [
+      "غير مسموح لك باستخدام البحث في هذا البوت.",
+      `رقم حسابك في تيليجرام: ${msg.from?.id}`,
+      "اطلب من الأدمن إضافتك في ALLOWED_USER_IDS.",
+    ].join("\n"),
+    keyboard,
+  );
+  return false;
+}
+
+async function editStatus(bot, message, text) {
+  if (!message) {
+    return;
+  }
+
+  try {
+    await bot.editMessageText(text, {
+      chat_id: message.chat.id,
+      message_id: message.message_id,
+      reply_markup: keyboard.reply_markup,
+    });
+  } catch (error) {
+    console.error("Could not edit status message:", error.message);
+  }
 }
 
 async function sendStats(bot, chatId) {
@@ -91,6 +136,10 @@ function registerHandlers(bot, options = {}) {
   bot.onText(/^\/search(?:\s+(.+))?$/, async (msg, match) => {
     const chatId = msg.chat.id;
     const query = match?.[1]?.trim();
+
+    if (!(await requireAllowedUser(bot, msg))) {
+      return;
+    }
 
     if (!query) {
       await bot.sendMessage(
@@ -152,18 +201,33 @@ function registerHandlers(bot, options = {}) {
     await fs.mkdir(downloadsDir, { recursive: true });
 
     let downloadedPath;
+    let statusMessage;
     try {
+      statusMessage = await bot.sendMessage(
+        chatId,
+        "جاري تحميل الملف وقراءة البيانات...",
+        keyboard,
+      );
+
       downloadedPath = await bot.downloadFile(document.file_id, downloadsDir);
+      await editStatus(bot, statusMessage, "تم تحميل الملف. جاري تحليل ملف Excel...");
+
       const profiles = parseCustomerProfilesFromExcel(downloadedPath);
 
       if (profiles.length === 0) {
-        await bot.sendMessage(
-          chatId,
+        await editStatus(
+          bot,
+          statusMessage,
           "لم يتم العثور على صفوف صالحة. تأكد من وجود أعمدة الهاتف واسم العميل والعنوان.",
-          keyboard,
         );
         return;
       }
+
+      await editStatus(
+        bot,
+        statusMessage,
+        `تم العثور على ${profiles.length} عميل. جاري الحفظ في قاعدة البيانات...`,
+      );
 
       let inserted = 0;
       let updated = 0;
@@ -173,13 +237,22 @@ function registerHandlers(bot, options = {}) {
         if (result === "updated") updated += 1;
       }
 
-      await bot.sendMessage(
-        chatId,
+      await editStatus(
+        bot,
+        statusMessage,
         `تم استيراد ${inserted} عميل جديد وتحديث ${updated} عميل.`,
-        keyboard,
       );
     } catch (error) {
       console.error(error);
+      if (statusMessage) {
+        await editStatus(
+          bot,
+          statusMessage,
+          "فشل الاستيراد. راجع سجلات السيرفر للتفاصيل.",
+        );
+        return;
+      }
+
       await bot.sendMessage(
         chatId,
         "فشل الاستيراد. راجع سجلات السيرفر للتفاصيل.",
@@ -203,6 +276,10 @@ function registerHandlers(bot, options = {}) {
     try {
       const arabicSearch = text.match(/^بحث\s+(.+)$/i);
       if (arabicSearch) {
+        if (!(await requireAllowedUser(bot, msg))) {
+          return;
+        }
+
         await searchAndReply(bot, chatId, arabicSearch[1].trim());
         return;
       }
@@ -231,6 +308,10 @@ function registerHandlers(bot, options = {}) {
       }
 
       if (/^(search|بحث)$/i.test(text)) {
+        if (!(await requireAllowedUser(bot, msg))) {
+          return;
+        }
+
         await bot.sendMessage(
           chatId,
           "اكتب رقم الهاتف أو اسم العميل الذي تريد البحث عنه.",
@@ -245,6 +326,10 @@ function registerHandlers(bot, options = {}) {
         }
 
         await sendStats(bot, chatId);
+        return;
+      }
+
+      if (!(await requireAllowedUser(bot, msg))) {
         return;
       }
 

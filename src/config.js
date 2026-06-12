@@ -5,6 +5,13 @@ const adminIds = new Set(
     .filter(Boolean),
 );
 
+const allowedUserIds = new Set(
+  (process.env.ALLOWED_USER_IDS || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean),
+);
+
 const keyboard = {
   reply_markup: {
     keyboard: [
@@ -30,6 +37,7 @@ const commands = [
 
 module.exports = {
   adminIds,
+  allowedUserIds,
   commands,
   keyboard,
 };
