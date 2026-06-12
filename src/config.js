@@ -10,6 +10,7 @@ const keyboard = {
     keyboard: [
       [{ text: "بحث" }, { text: "رفع Excel" }],
       [{ text: "إحصائيات" }, { text: "مساعدة" }],
+      [{ text: "رقمي" }],
     ],
     resize_keyboard: true,
     is_persistent: true,

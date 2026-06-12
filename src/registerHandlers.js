@@ -201,12 +201,27 @@ function registerHandlers(bot, options = {}) {
     }
 
     try {
+      const arabicSearch = text.match(/^بحث\s+(.+)$/i);
+      if (arabicSearch) {
+        await searchAndReply(bot, chatId, arabicSearch[1].trim());
+        return;
+      }
+
       if (/^(help|مساعدة)$/i.test(text)) {
         await bot.sendMessage(chatId, helpText(), keyboard);
         return;
       }
 
-      if (/^(import excel|رفع excel)$/i.test(text)) {
+      if (/^(myid|رقمي)$/i.test(text)) {
+        await bot.sendMessage(
+          chatId,
+          `رقم حسابك في تيليجرام: ${msg.from.id}`,
+          keyboard,
+        );
+        return;
+      }
+
+      if (/^(import excel|رفع excel|رفع|رفع ملف)$/i.test(text)) {
         if (!(await requireAdmin(bot, msg))) {
           return;
         }
