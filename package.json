@@ -5,7 +5,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "set-webhook": "node scripts/set-webhook.js"
   },
   "dependencies": {
     "dotenv": "^16.6.1",

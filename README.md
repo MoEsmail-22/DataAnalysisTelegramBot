@@ -39,6 +39,39 @@ Run `schema.sql` in Supabase SQL Editor or your PostgreSQL client.
 npm start
 ```
 
+## Deploy Without A Card: Vercel Webhook
+
+Vercel does not keep `npm start` running forever, so production deployment uses Telegram webhook mode through `api/webhook.js`.
+
+1. Deploy this repo on Vercel as a Node.js project.
+2. If you use the Vercel CLI, install the Vercel plugin:
+
+```bash
+npx plugins add vercel/vercel-plugin
+```
+
+3. Add these environment variables in Vercel:
+
+```env
+BOT_TOKEN=your_new_bot_token
+DATABASE_URL=your_supabase_postgres_connection_string
+ADMIN_IDS=123456789,987654321
+```
+
+4. After deployment, copy your Vercel URL and set the Telegram webhook:
+
+```bash
+WEBHOOK_URL=https://data-analysis-telegram-bfoooyxu3-moesmail-22s-projects.vercel.app/api/webhook npm run set-webhook
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:WEBHOOK_URL="https://data-analysis-telegram-bfoooyxu3-moesmail-22s-projects.vercel.app/api/webhook"; npm run set-webhook
+```
+
+5. Stop the local polling bot with `Ctrl + C`.
+
 ## Bot Commands
 
 - `/start` - open the bot menu
