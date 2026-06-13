@@ -212,6 +212,16 @@ function sheetsRowsToProfiles(rows, headers) {
 }
 
 /**
+ * Get all sheet tab names for a spreadsheet
+ */
+async function getSpreadsheetTabNames(sheetsAPI, sheetId) {
+  const response = await sheetsAPI.spreadsheets.get({ spreadsheetId: sheetId });
+  return (response.data.sheets || [])
+    .map((sheet) => sheet.properties?.title)
+    .filter(Boolean);
+}
+
+/**
  * Read customer data from Google Sheet
  */
 async function readGoogleSheet(sheetsAPI, sheetId, sheetName) {
@@ -223,7 +233,10 @@ async function readGoogleSheet(sheetsAPI, sheetId, sheetName) {
 
     const rows = response.data.values || [];
     if (rows.length === 0) {
-      console.log("Google Sheet is empty");
+      const tabs = await getSpreadsheetTabNames(sheetsAPI, sheetId);
+      console.log(
+        `Google Sheet tab "${sheetName}" is empty or not found. Available tabs: ${tabs.join(", ")}`,
+      );
       return [];
     }
 
