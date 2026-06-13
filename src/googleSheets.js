@@ -143,7 +143,7 @@ const HEADER_ALIASES = {
   address_1: ["العنوان", "address", "address_1"],
   address_2: ["العنوان 02", "address_2"],
   address_3: ["العنوان 03", "address_3"],
-  notes: ["ملحوظة", "notes", "note"],
+  notes: ["ملحوظة", "الملحظات", "notes", "note"],
 };
 
 /**

@@ -49,7 +49,7 @@ function keyboardForRole(role) {
   }
 
   if (canImport(role)) {
-    rows.push([{ text: "مزامنة" }, { text: "إحصائيات" }]);
+    rows.push([{ text: "تحدتث البينات" }, { text: "إحصائيات" }]);
   }
 
   rows.push([{ text: "مساعدة" }, { text: "رقمي" }]);
@@ -195,7 +195,7 @@ async function showAccessManagement(bot, msg) {
       "إدارة المستخدمين:",
       "",
       "إضافة مستخدم: يسمح له بالبحث فقط.",
-      "إضافة أدمن: يسمح له بالبحث والمزامنة من Google Sheet.",
+      "إضافة أدمن: يسمح له بالبحث والتحدتث البينات من Google Sheet.",
       "حذف مستخدم/أدمن: إزالة الصلاحية من قاعدة البيانات.",
       "",
       "الـ main admins الموجودون في ADMIN_IDS لا يمكن حذفهم من هنا.",
@@ -249,7 +249,7 @@ async function handleManagementState(bot, msg, text) {
 
   if (state.action === "add_admin") {
     await upsertBotAccessUser(targetId, "admin", msg.from.id);
-    message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث والمزامنة من Google Sheet.`;
+    message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث والتحدتث البينات من Google Sheet.`;
   }
 
   if (state.action === "remove_user") {
@@ -350,7 +350,7 @@ function registerHandlers(bot, options = {}) {
       const chatId = msg.chat.id;
       const statusMessage = await bot.sendMessage(
         chatId,
-        "جاري مزامنة البيانات من Google Sheet...",
+        "جاري تحدتث البينات البيانات من Google Sheet...",
         keyboardForRole(role),
       );
 
@@ -361,7 +361,7 @@ function registerHandlers(bot, options = {}) {
       console.error(error);
       await bot.sendMessage(
         msg.chat.id,
-        "فشلت المزامنة. راجع سجلات السيرفر.",
+        "فشلت التحدتث البينات. راجع سجلات السيرفر.",
         keyboardForRole(role),
       );
     }
@@ -571,11 +571,11 @@ function registerHandlers(bot, options = {}) {
         return;
       }
 
-      if (/^(sync|مزامنة)$/i.test(text)) {
+      if (/^(sync|تحدتث البينات)$/i.test(text)) {
         if (!(await requireImportAccess(bot, msg, role))) return;
         const statusMessage = await bot.sendMessage(
           chatId,
-          "جاري مزامنة البيانات من Google Sheet...",
+          "جاري تحدتث البينات البيانات من Google Sheet...",
           keyboardForRole(role),
         );
 
@@ -587,7 +587,7 @@ function registerHandlers(bot, options = {}) {
           await editStatus(
             bot,
             statusMessage,
-            "فشلت المزامنة. راجع سجلات السيرفر.",
+            "فشلت التحدتث البينات. راجع سجلات السيرفر.",
             role,
           );
         }

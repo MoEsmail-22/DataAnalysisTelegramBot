@@ -160,4 +160,3 @@ For hosting platforms such as `cloud.tranger.xyz`, push the latest code to GitHu
 
 - Do NOT commit your Google service account JSON key to the repository. GitHub push protection will block pushes that contain secrets (and this project has secret scanning enabled).
 - Prefer `GOOGLE_SHEETS_CREDENTIALS_PATH` pointing to a JSON file stored on the server, and keep that file out of version control (add it to `.gitignore`).
-
