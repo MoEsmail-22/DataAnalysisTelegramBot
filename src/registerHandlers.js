@@ -1,6 +1,3 @@
-const fs = require("fs/promises");
-const os = require("os");
-const path = require("path");
 const {
   countCustomerProfiles,
   findCustomerProfile,
@@ -10,13 +7,12 @@ const {
   upsertBotAccessUser,
   upsertCustomerProfiles,
 } = require("./db");
-const { normalizePhone, parseCustomerProfilesFromExcel } = require("./excel");
+const { normalizePhone } = require("./excel");
 const { syncGoogleSheet } = require("./googleSheets");
 const { adminIds } = require("./config");
 const {
   formatCustomerProfile,
   helpText,
-  importHelpText,
   statsText,
 } = require("./messages");
 
@@ -57,7 +53,7 @@ function keyboardForRole(role) {
   }
 
   if (canImport(role)) {
-    rows.push([{ text: "رفع Excel" }, { text: "إحصائيات" }]);
+    rows.push([{ text: "مزامنة" }, { text: "إحصائيات" }]);
   }
 
   rows.push([{ text: "مساعدة" }, { text: "رقمي" }]);
@@ -162,7 +158,10 @@ async function editStatus(bot, message, text, role) {
       try {
         await bot.sendMessage(message.chat.id, text, keyboardForRole(role));
       } catch (sendError) {
-        console.error("Failed to send fallback status message:", sendError.message);
+        console.error(
+          "Failed to send fallback status message:",
+          sendError.message,
+        );
       }
     }
   }
@@ -186,7 +185,11 @@ async function searchAndReply(bot, chatId, query, role) {
     return;
   }
 
-  await bot.sendMessage(chatId, formatCustomerProfile(profile), keyboardForRole(role));
+  await bot.sendMessage(
+    chatId,
+    formatCustomerProfile(profile),
+    keyboardForRole(role),
+  );
 }
 
 async function showAccessManagement(bot, msg) {
@@ -196,7 +199,7 @@ async function showAccessManagement(bot, msg) {
       "إدارة المستخدمين:",
       "",
       "إضافة مستخدم: يسمح له بالبحث فقط.",
-      "إضافة أدمن: يسمح له بالبحث ورفع Excel.",
+      "إضافة أدمن: يسمح له بالبحث والمزامنة من Google Sheet.",
       "حذف مستخدم/أدمن: إزالة الصلاحية من قاعدة البيانات.",
       "",
       "الـ main admins الموجودون في ADMIN_IDS لا يمكن حذفهم من هنا.",
@@ -213,7 +216,9 @@ async function sendAccessList(bot, msg) {
 
   await bot.sendMessage(
     msg.chat.id,
-    lines.length ? lines.join("\n") : "لا توجد صلاحيات محفوظة في قاعدة البيانات.",
+    lines.length
+      ? lines.join("\n")
+      : "لا توجد صلاحيات محفوظة في قاعدة البيانات.",
     managementKeyboard(),
   );
 }
@@ -248,7 +253,7 @@ async function handleManagementState(bot, msg, text) {
 
   if (state.action === "add_admin") {
     await upsertBotAccessUser(targetId, "admin", msg.from.id);
-    message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث ورفع Excel.`;
+    message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث والمزامنة من Google Sheet.`;
   }
 
   if (state.action === "remove_user") {
@@ -297,11 +302,7 @@ function registerHandlers(bot, options = {}) {
     );
   });
 
-  bot.onText(/^\/import$/, async (msg) => {
-    const role = await getRole(msg);
-    if (!(await requireImportAccess(bot, msg, role))) return;
-    await bot.sendMessage(msg.chat.id, importHelpText(), keyboardForRole(role));
-  });
+
 
   bot.onText(/^\/search(?:\s+(.+))?$/, async (msg, match) => {
     const role = await getRole(msg);
@@ -361,12 +362,7 @@ function registerHandlers(bot, options = {}) {
 
       const result = await syncGoogleSheet(upsertCustomerProfiles);
 
-      await editStatus(
-        bot,
-        statusMessage,
-        result.message,
-        role,
-      );
+      await editStatus(bot, statusMessage, result.message, role);
     } catch (error) {
       console.error(error);
       await bot.sendMessage(
@@ -407,7 +403,12 @@ function registerHandlers(bot, options = {}) {
       );
 
       downloadedPath = await bot.downloadFile(document.file_id, downloadsDir);
-      await editStatus(bot, statusMessage, "تم تحميل الملف. جاري تحليل ملف Excel...", role);
+      await editStatus(
+        bot,
+        statusMessage,
+        "تم تحميل الملف. جاري تحليل ملف Excel...",
+        role,
+      );
 
       const profiles = parseCustomerProfilesFromExcel(downloadedPath);
 
@@ -442,11 +443,20 @@ function registerHandlers(bot, options = {}) {
       console.error(error.stack || error);
 
       if (statusMessage) {
-        await editStatus(bot, statusMessage, `فشل الاستيراد: ${errorMessage}`, role);
+        await editStatus(
+          bot,
+          statusMessage,
+          `فشل الاستيراد: ${errorMessage}`,
+          role,
+        );
         return;
       }
 
-      await bot.sendMessage(chatId, `فشل الاستيراد: ${errorMessage}`, keyboardForRole(role));
+      await bot.sendMessage(
+        chatId,
+        `فشل الاستيراد: ${errorMessage}`,
+        keyboardForRole(role),
+      );
     } finally {
       if (downloadedPath) {
         await fs.rm(downloadedPath, { force: true });
@@ -495,28 +505,44 @@ function registerHandlers(bot, options = {}) {
       if (/^إضافة مستخدم$/i.test(text)) {
         if (!(await requireManagementAccess(bot, msg, role))) return;
         managementStates.set(String(msg.from.id), { action: "add_user" });
-        await bot.sendMessage(msg.chat.id, "أرسل Telegram ID للمستخدم.", managementKeyboard());
+        await bot.sendMessage(
+          msg.chat.id,
+          "أرسل Telegram ID للمستخدم.",
+          managementKeyboard(),
+        );
         return;
       }
 
       if (/^إضافة أدمن$/i.test(text)) {
         if (!(await requireManagementAccess(bot, msg, role))) return;
         managementStates.set(String(msg.from.id), { action: "add_admin" });
-        await bot.sendMessage(msg.chat.id, "أرسل Telegram ID للأدمن الجديد.", managementKeyboard());
+        await bot.sendMessage(
+          msg.chat.id,
+          "أرسل Telegram ID للأدمن الجديد.",
+          managementKeyboard(),
+        );
         return;
       }
 
       if (/^حذف مستخدم$/i.test(text)) {
         if (!(await requireManagementAccess(bot, msg, role))) return;
         managementStates.set(String(msg.from.id), { action: "remove_user" });
-        await bot.sendMessage(msg.chat.id, "أرسل Telegram ID للمستخدم المراد حذفه.", managementKeyboard());
+        await bot.sendMessage(
+          msg.chat.id,
+          "أرسل Telegram ID للمستخدم المراد حذفه.",
+          managementKeyboard(),
+        );
         return;
       }
 
       if (/^حذف أدمن$/i.test(text)) {
         if (!(await requireManagementAccess(bot, msg, role))) return;
         managementStates.set(String(msg.from.id), { action: "remove_admin" });
-        await bot.sendMessage(msg.chat.id, "أرسل Telegram ID للأدمن المراد حذفه.", managementKeyboard());
+        await bot.sendMessage(
+          msg.chat.id,
+          "أرسل Telegram ID للأدمن المراد حذفه.",
+          managementKeyboard(),
+        );
         return;
       }
 
@@ -527,15 +553,15 @@ function registerHandlers(bot, options = {}) {
       }
 
       if (/^رجوع$/i.test(text)) {
-        await bot.sendMessage(chatId, "تم الرجوع للقائمة الرئيسية.", keyboardForRole(role));
+        await bot.sendMessage(
+          chatId,
+          "تم الرجوع للقائمة الرئيسية.",
+          keyboardForRole(role),
+        );
         return;
       }
 
-      if (/^(import excel|رفع excel|رفع|رفع ملف)$/i.test(text)) {
-        if (!(await requireImportAccess(bot, msg, role))) return;
-        await bot.sendMessage(chatId, importHelpText(), keyboardForRole(role));
-        return;
-      }
+
 
       if (/^(search|بحث)$/i.test(text)) {
         if (!(await requireSearchAccess(bot, msg, role))) return;

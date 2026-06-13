@@ -48,9 +48,12 @@ process.once("SIGTERM", async () => {
 testConnection()
   .then(() => {
     console.log("Bot is running. Database connection OK.");
-    
+
     // Start periodic Google Sheets sync if configured
-    const syncInterval = parseInt(process.env.SYNC_INTERVAL_MINUTES || "10", 10);
+    const syncInterval = parseInt(
+      process.env.SYNC_INTERVAL_MINUTES || "10",
+      10,
+    );
     startPeriodicSync(upsertCustomerProfiles, syncInterval);
   })
   .catch((error) => {

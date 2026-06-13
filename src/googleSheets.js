@@ -19,7 +19,7 @@ function initializeSheets() {
   if (!credentialsJson) {
     throw new Error(
       "GOOGLE_SHEETS_CREDENTIALS environment variable is not set. " +
-        "Set it to the full JSON content of your service account key file."
+        "Set it to the full JSON content of your service account key file.",
     );
   }
 
@@ -29,7 +29,7 @@ function initializeSheets() {
   } catch (error) {
     throw new Error(
       "GOOGLE_SHEETS_CREDENTIALS is not valid JSON. " +
-        "It should be the full JSON content of your service account key file."
+        "It should be the full JSON content of your service account key file.",
     );
   }
 
@@ -66,7 +66,11 @@ function normalizeArabicDigits(value) {
  * Clean and normalize text
  */
 function cleanText(value) {
-  return String(value || "").replace(/\s+/g, " ").trim() || null;
+  return (
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim() || null
+  );
 }
 
 /**
@@ -132,9 +136,10 @@ function mapRow(headers, row) {
 
   for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
     const index = headers.findIndex((header) =>
-      aliases.some((alias) =>
-        normalizeHeader(alias).toLowerCase() === header.toLowerCase()
-      )
+      aliases.some(
+        (alias) =>
+          normalizeHeader(alias).toLowerCase() === header.toLowerCase(),
+      ),
     );
 
     mapped[field] = index === -1 ? "" : row[index];
@@ -173,7 +178,7 @@ function sheetsRowsToProfiles(rows, headers) {
         addresses,
         notes: cleanText(mapped.notes),
         rawData: Object.fromEntries(
-          headers.map((header, index) => [header, row[index] || ""])
+          headers.map((header, index) => [header, row[index] || ""]),
         ),
       };
 
@@ -182,7 +187,9 @@ function sheetsRowsToProfiles(rows, headers) {
     })
     .filter(
       (profile) =>
-        profile.customerName || profile.phones.length || profile.addresses.length
+        profile.customerName ||
+        profile.phones.length ||
+        profile.addresses.length,
     );
 }
 
@@ -220,7 +227,7 @@ async function syncGoogleSheet(upsertFunction) {
   if (!process.env.GOOGLE_SHEET_ID) {
     console.warn(
       "GOOGLE_SHEET_ID not set. Google Sheets sync is disabled. " +
-        "Set GOOGLE_SHEET_ID to enable sync."
+        "Set GOOGLE_SHEET_ID to enable sync.",
     );
     return { status: "disabled", message: "GOOGLE_SHEET_ID not configured" };
   }
@@ -245,7 +252,9 @@ async function syncGoogleSheet(upsertFunction) {
     // Upsert to database
     await upsertFunction(profiles);
 
-    console.log(`Successfully synced ${profiles.length} profiles from Google Sheet`);
+    console.log(
+      `Successfully synced ${profiles.length} profiles from Google Sheet`,
+    );
     return {
       status: "success",
       message: `Synced ${profiles.length} profiles from Google Sheet`,
@@ -271,7 +280,7 @@ function startPeriodicSync(upsertFunction, intervalMinutes = 10) {
 
   if (!process.env.GOOGLE_SHEET_ID) {
     console.log(
-      "GOOGLE_SHEET_ID not set. Periodic Google Sheets sync disabled."
+      "GOOGLE_SHEET_ID not set. Periodic Google Sheets sync disabled.",
     );
     return;
   }
@@ -279,7 +288,7 @@ function startPeriodicSync(upsertFunction, intervalMinutes = 10) {
   const intervalMs = intervalMinutes * 60 * 1000;
 
   console.log(
-    `Starting periodic Google Sheets sync every ${intervalMinutes} minutes`
+    `Starting periodic Google Sheets sync every ${intervalMinutes} minutes`,
   );
 
   // Run immediately on start

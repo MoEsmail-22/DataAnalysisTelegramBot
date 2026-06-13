@@ -15,7 +15,7 @@ const allowedUserIds = new Set(
 const keyboard = {
   reply_markup: {
     keyboard: [
-      [{ text: "بحث" }, { text: "رفع Excel" }],
+      [{ text: "بحث" }, { text: "مزامنة" }],
       [{ text: "إحصائيات" }, { text: "مساعدة" }],
       [{ text: "رقمي" }],
     ],
@@ -30,7 +30,6 @@ const commands = [
   { command: "start", description: "فتح القائمة" },
   { command: "help", description: "عرض المساعدة" },
   { command: "myid", description: "إظهار رقم حسابك" },
-  { command: "import", description: "رفع ملف Excel" },
   { command: "search", description: "بحث برقم الهاتف أو الاسم" },
   { command: "stats", description: "إحصائيات البيانات" },
   { command: "sync", description: "مزامنة من Google Sheet يدويا" },

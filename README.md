@@ -1,6 +1,6 @@
 # Telegram Arabic Customer Data Bot
 
-Telegram bot for importing the main Arabic Excel customer file into Supabase/PostgreSQL and searching customer delivery data by phone number or name.
+Telegram bot that syncs customer data from a Google Sheet into Supabase/PostgreSQL and allows searching customer delivery information by phone number or name.
 
 ## What It Stores
 
@@ -25,9 +25,15 @@ Create `.env` locally, or add these environment variables in your hosting dashbo
 BOT_TOKEN=your_new_bot_token
 DATABASE_URL=your_supabase_postgres_connection_string
 ADMIN_IDS=123456789,987654321
+
+# Google Sheets Sync
+GOOGLE_SHEETS_CREDENTIALS={"type":"service_account",...}
+GOOGLE_SHEET_ID=1kc_LVn-KyxUuBhY37rLpC5BvkfCC15MiTbEfLS5055w
+GOOGLE_SHEET_NAME=Data
+SYNC_INTERVAL_MINUTES=10
 ```
 
-`ADMIN_IDS` is a comma-separated list of Telegram user IDs. Admins can upload Excel files and view stats. Normal users can search only.
+`ADMIN_IDS` is a comma-separated list of Telegram user IDs. Admins can trigger manual sync and view stats. Normal users can search only.
 
 ## Install
 
@@ -37,7 +43,7 @@ npm install
 
 ## Database
 
-Run `schema.sql` in Supabase SQL Editor before importing the Excel file.
+Run `schema.sql` in Supabase SQL Editor before the bot starts syncing data.
 
 ## Start Locally
 
@@ -50,7 +56,6 @@ npm start
 - `/start` - فتح القائمة
 - `/help` - عرض المساعدة
 - `/myid` - إظهار رقم حسابك
-- `/import` - رفع ملف Excel
 - `/search phone_or_name` - بحث برقم الهاتف أو الاسم
 - `/stats` - إحصائيات البيانات
 - `/sync` - مزامنة من Google Sheet يدويا
@@ -58,16 +63,15 @@ npm start
 The bot also shows Arabic shortcut buttons:
 
 - بحث
-- رفع Excel
+- مزامنة
 - إحصائيات
 - مساعدة
-- مزامنة
 
-## Google Sheets Sync (Optional)
+## Google Sheets Configuration
 
-Instead of uploading Excel files manually, you can sync customer data directly from a Google Sheet. The bot can read from a Google Sheet automatically every 10 minutes (configurable).
+The bot syncs customer data directly from a Google Sheet. Setup is required.
 
-### Setup Google Sheets Sync
+### Setup Steps
 
 1. **Create a Google Cloud Project:**
    - Go to [Google Cloud Console](https://console.cloud.google.com/)
@@ -88,21 +92,16 @@ Instead of uploading Excel files manually, you can sync customer data directly f
 5. **Configure Environment Variables:**
    ```env
    GOOGLE_SHEETS_CREDENTIALS={"type":"service_account","project_id":"..."}
-   GOOGLE_SHEET_ID=1ABCDEF123456789
+   GOOGLE_SHEET_ID=1kc_LVn-KyxUuBhY37rLpC5BvkfCC15MiTbEfLS5055w
    GOOGLE_SHEET_NAME=Data
    SYNC_INTERVAL_MINUTES=10
    ```
 
-   - `GOOGLE_SHEETS_CREDENTIALS`: Full JSON content from the downloaded key file
-   - `GOOGLE_SHEET_ID`: The ID from the sheet URL (between `/d/` and `/edit`)
-   - `GOOGLE_SHEET_NAME`: The name of the sheet tab (default: "Data")
-   - `SYNC_INTERVAL_MINUTES`: How often to sync (default: 10)
+### Google Sheet Column Format
 
-### Google Sheet Format
+Your Google Sheet must have these columns (can be in any order):
 
-Your Google Sheet should have the same columns as the Excel file:
-
-- `الهاتف 001` - main phone number
+- `الهاتف 001` - main phone number (primary key for updates)
 - `اسم العميل` - customer name
 - `الهاتف 0012` - duplicate-check phone
 - `الهاتف 002` - second phone
@@ -115,38 +114,13 @@ Your Google Sheet should have the same columns as the Excel file:
 - `العنوان 03` - third address
 - `ملحوظة` - notes
 
-### Manual Sync
+### How Sync Works
 
-Admins can trigger a manual sync at any time using:
-- `/sync` command
-- مزامنة button in the bot keyboard
-
-### How It Works
-
-1. Bot reads all rows from the specified Google Sheet
-2. Parses and normalizes the data (same as Excel parser)
-3. Updates the database using the primary phone number as the key
-4. Sync runs automatically every configured interval (default: 10 minutes)
-5. Admins can also trigger sync manually anytime
-
-## Excel Columns
-
-The production Excel file uses these columns:
-
-- `الهاتف 001` - main phone number, used as the primary update key
-- `اسم العميل` - customer name
-- `الهاتف 0012` - duplicate-check phone column
-- `الهاتف 002` - second phone number
-- `الهاتف 003` - third phone number
-- `المحافظة` - governorate
-- `Zone` - zone
-- `Area` - area
-- `العنوان` - first address
-- `العنوان 02` - second address
-- `العنوان 03` - third address
-- `ملحوظة` - notes
-
-The first numeric header row in the workbook is ignored automatically. The parser detects the Arabic header row.
+1. Bot reads all rows from the specified Google Sheet automatically every 10 minutes
+2. Parses and normalizes the data
+3. Updates the database using the primary phone number (`الهاتف 001`) as the key
+4. Admins can manually trigger sync anytime using `/sync` or مزامنة button
+5. Errors are logged to the server console
 
 ## Deployment
 
