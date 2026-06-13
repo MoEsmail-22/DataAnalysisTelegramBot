@@ -142,15 +142,15 @@ async function editStatus(bot, message, text, role) {
     await bot.editMessageText(text, {
       chat_id: message.chat.id,
       message_id: message.message_id,
-      reply_markup: keyboardForRole(role).reply_markup,
     });
   } catch (error) {
     console.error("Could not edit status message:", error.message);
 
-    if (
-      message.chat?.id &&
-      String(error.message).toLowerCase().includes("message can't be edited")
-    ) {
+    if (String(error.message).toLowerCase().includes("message is not modified")) {
+      return;
+    }
+
+    if (message.chat?.id) {
       try {
         await bot.sendMessage(message.chat.id, text, keyboardForRole(role));
       } catch (sendError) {

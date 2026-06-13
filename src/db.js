@@ -131,7 +131,7 @@ async function findCustomerProfile(query) {
     `
       select *
       from customer_profiles
-      where $1 = any(phones)
+      where phones @> array[$1]::text[]
         or primary_phone = $1
         or duplicate_check_phone = $1
         or customer_name ilike $2
