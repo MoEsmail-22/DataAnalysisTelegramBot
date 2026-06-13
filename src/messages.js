@@ -1,6 +1,9 @@
 function formatList(title, values) {
   if (!Array.isArray(values) || values.length === 0) return null;
-  return [title, ...values.map((value, index) => `${index + 1}. ${value}`)].join("\n");
+  return [
+    title,
+    ...values.map((value, index) => `${index + 1}. ${value}`),
+  ].join("\n");
 }
 
 function formatCustomerProfile(profile) {

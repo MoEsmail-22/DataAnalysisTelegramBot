@@ -169,8 +169,13 @@ function mapRow(headers, row) {
 /**
  * Convert Google Sheets rows to customer profiles
  */
+function isEmptySheetRow(row) {
+  return !row || row.every((cell) => String(cell || "").trim() === "");
+}
+
 function sheetsRowsToProfiles(rows, headers) {
   return rows
+    .filter((row) => !isEmptySheetRow(row))
     .map((row) => {
       const mapped = mapRow(headers, row);
       const phones = unique([
@@ -224,27 +229,77 @@ async function getSpreadsheetTabNames(sheetsAPI, sheetId) {
 /**
  * Read customer data from Google Sheet
  */
+function buildSheetRange(sheetName) {
+  if (!sheetName) return "";
+  if (sheetName.includes("!")) return sheetName;
+
+  const normalizedName = sheetName.replace(/'/g, "''");
+  return `'${normalizedName}'`;
+}
+
 async function readGoogleSheet(sheetsAPI, sheetId, sheetName) {
   try {
+    const tabs = await getSpreadsheetTabNames(sheetsAPI, sheetId);
+
+    if (!tabs.includes(sheetName)) {
+      console.log(
+        `Google Sheet tab "${sheetName}" not found. Available tabs: ${tabs.join(", ")}`,
+      );
+      return {
+        profiles: [],
+        rowsCount: 0,
+        tabNames: tabs,
+        message: `Google Sheet tab "${sheetName}" not found. Available tabs: ${tabs.join(", ")}`,
+      };
+    }
+
+    const range = buildSheetRange(sheetName);
     const response = await sheetsAPI.spreadsheets.values.get({
       spreadsheetId: sheetId,
-      range: sheetName,
+      range,
     });
 
     const rows = response.data.values || [];
+
     if (rows.length === 0) {
-      const tabs = await getSpreadsheetTabNames(sheetsAPI, sheetId);
       console.log(
         `Google Sheet tab "${sheetName}" is empty or not found. Available tabs: ${tabs.join(", ")}`,
       );
-      return [];
+      return {
+        profiles: [],
+        rowsCount: 0,
+        tabNames: tabs,
+        message: `Google Sheet tab "${sheetName}" is empty or missing. Available tabs: ${tabs.join(", ")}`,
+      };
     }
 
     // First row is header
     const headers = rows[0].map(normalizeHeader);
     const dataRows = rows.slice(1);
+    const profiles = sheetsRowsToProfiles(dataRows, headers);
 
-    return sheetsRowsToProfiles(dataRows, headers);
+    if (profiles.length === 0) {
+      console.log(
+        `Google Sheet tab "${sheetName}" has ${dataRows.length} rows but no valid profiles were parsed.`,
+      );
+      console.log(`Header row found: ${JSON.stringify(headers)}`);
+      console.log(
+        `First data row (for reference): ${JSON.stringify(dataRows[0] || [])}`,
+      );
+      return {
+        profiles: [],
+        rowsCount: dataRows.length,
+        tabNames: tabs,
+        message: `Sheet tab "${sheetName}" has ${dataRows.length} rows but no valid customer profiles were parsed. Check that the header row and data columns match the expected format. Available tabs: ${tabs.join(", ")}`,
+      };
+    }
+
+    return {
+      profiles,
+      rowsCount: dataRows.length,
+      tabNames: tabs,
+      message: `Parsed ${profiles.length} profiles from Google Sheet tab "${sheetName}".`,
+    };
   } catch (error) {
     console.error("Error reading Google Sheet:", error.message);
     throw error;
@@ -270,26 +325,26 @@ async function syncGoogleSheet(upsertFunction) {
 
     console.log(`Syncing from Google Sheet: ${sheetId}, range: ${sheetName}`);
 
-    const profiles = await readGoogleSheet(sheetsAPI, sheetId, sheetName);
+    const result = await readGoogleSheet(sheetsAPI, sheetId, sheetName);
 
-    if (profiles.length === 0) {
+    if (!result.profiles || result.profiles.length === 0) {
       return {
         status: "success",
-        message: "Google Sheet is empty",
+        message: result.message || "Google Sheet is empty",
         profilesCount: 0,
       };
     }
 
     // Upsert to database
-    await upsertFunction(profiles);
+    await upsertFunction(result.profiles);
 
     console.log(
-      `Successfully synced ${profiles.length} profiles from Google Sheet`,
+      `Successfully synced ${result.profiles.length} profiles from Google Sheet`,
     );
     return {
       status: "success",
-      message: `Synced ${profiles.length} profiles from Google Sheet`,
-      profilesCount: profiles.length,
+      message: `Synced ${result.profiles.length} profiles from Google Sheet`,
+      profilesCount: result.profiles.length,
     };
   } catch (error) {
     console.error("Google Sheets sync failed:", error.message);

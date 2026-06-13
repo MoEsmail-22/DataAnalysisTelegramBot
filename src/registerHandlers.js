@@ -10,11 +10,7 @@ const {
 const { normalizePhone } = require("./excel");
 const { syncGoogleSheet } = require("./googleSheets");
 const { adminIds } = require("./config");
-const {
-  formatCustomerProfile,
-  helpText,
-  statsText,
-} = require("./messages");
+const { formatCustomerProfile, helpText, statsText } = require("./messages");
 
 const managementStates = new Map();
 
@@ -302,8 +298,6 @@ function registerHandlers(bot, options = {}) {
     );
   });
 
-
-
   bot.onText(/^\/search(?:\s+(.+))?$/, async (msg, match) => {
     const role = await getRole(msg);
     const chatId = msg.chat.id;
@@ -560,8 +554,6 @@ function registerHandlers(bot, options = {}) {
         );
         return;
       }
-
-
 
       if (/^(search|بحث)$/i.test(text)) {
         if (!(await requireSearchAccess(bot, msg, role))) return;
