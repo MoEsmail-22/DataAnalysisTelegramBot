@@ -9,7 +9,9 @@ const { registerHandlers } = require("./registerHandlers");
 const { BOT_TOKEN } = process.env;
 
 if (!BOT_TOKEN) {
-  console.error("EFATAL: BOT_TOKEN is missing. Create .env and set BOT_TOKEN=...");
+  console.error(
+    "EFATAL: BOT_TOKEN is missing. Create .env and set BOT_TOKEN=...",
+  );
   process.exit(1);
 }
 

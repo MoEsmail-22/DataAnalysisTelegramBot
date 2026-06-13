@@ -1,3 +1,6 @@
+"use strict";
+
+const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const pool = new Pool({
@@ -7,44 +10,72 @@ const pool = new Pool({
     : undefined,
 });
 
-async function testConnection() {
-  await pool.query("select 1");
+function unique(values) {
+  return [...new Set(values.flat().filter(Boolean))];
 }
 
-async function upsertCustomerProfile(profile) {
-  const result = await pool.query(
-    `
-      insert into customer_profiles (
-        source_hash,
-        customer_name,
-        primary_phone,
-        duplicate_check_phone,
-        phones,
-        governorate,
-        zone,
-        area,
-        addresses,
-        notes,
-        raw_data,
-        updated_at
-      )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
-      on conflict (primary_phone)
-      do update set
-        source_hash = excluded.source_hash,
-        customer_name = coalesce(excluded.customer_name, customer_profiles.customer_name),
-        duplicate_check_phone = excluded.duplicate_check_phone,
-        phones = excluded.phones,
-        governorate = excluded.governorate,
-        zone = excluded.zone,
-        area = excluded.area,
-        addresses = excluded.addresses,
-        notes = excluded.notes,
-        raw_data = excluded.raw_data,
-        updated_at = now()
-      returning (xmax = 0) as inserted
-    `,
-    [
+function makeHash(profile) {
+  return crypto.createHash("sha256").update(JSON.stringify(profile)).digest("hex");
+}
+
+async function ensureAccessTable() {
+  await pool.query(`
+    create table if not exists bot_access_users (
+      telegram_id text primary key,
+      role text not null check (role in ('user', 'admin')),
+      added_by text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+}
+
+async function testConnection() {
+  await pool.query("select 1");
+  await ensureAccessTable();
+}
+
+async function upsertCustomerProfiles(profiles) {
+  if (!profiles.length) return;
+
+  const groupedProfiles = new Map();
+  let nullKeyCounter = 0;
+
+  for (const profile of profiles) {
+    const key = profile.primaryPhone || `__NULL__${nullKeyCounter++}`;
+    const existing = groupedProfiles.get(key);
+
+    if (!existing) {
+      groupedProfiles.set(key, { ...profile });
+      continue;
+    }
+
+    existing.customerName = existing.customerName || profile.customerName;
+    existing.duplicateCheckPhone =
+      existing.duplicateCheckPhone || profile.duplicateCheckPhone;
+    existing.phones = unique([...existing.phones, ...profile.phones]);
+    existing.governorate = existing.governorate || profile.governorate;
+    existing.zone = existing.zone || profile.zone;
+    existing.area = existing.area || profile.area;
+    existing.addresses = unique([...existing.addresses, ...profile.addresses]);
+    existing.notes = existing.notes || profile.notes;
+    existing.rawData = { ...existing.rawData, ...profile.rawData };
+    existing.sourceHash = makeHash(existing);
+  }
+
+  const normalizedProfiles = Array.from(groupedProfiles.values());
+  const values = [];
+  const placeholders = [];
+
+  normalizedProfiles.forEach((profile, index) => {
+    const base = index * 11;
+
+    placeholders.push(
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5},
+        $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, now())`,
+    );
+
+    values.push(
       profile.sourceHash,
       profile.customerName,
       profile.primaryPhone,
@@ -56,10 +87,41 @@ async function upsertCustomerProfile(profile) {
       profile.addresses,
       profile.notes,
       profile.rawData,
-    ],
-  );
+    );
+  });
 
-  return result.rows[0]?.inserted ? "inserted" : "updated";
+  const query = `
+    insert into customer_profiles (
+      source_hash,
+      customer_name,
+      primary_phone,
+      duplicate_check_phone,
+      phones,
+      governorate,
+      zone,
+      area,
+      addresses,
+      notes,
+      raw_data,
+      updated_at
+    )
+    values ${placeholders.join(",")}
+    on conflict (primary_phone)
+    do update set
+      source_hash = excluded.source_hash,
+      customer_name = excluded.customer_name,
+      duplicate_check_phone = excluded.duplicate_check_phone,
+      phones = excluded.phones,
+      governorate = excluded.governorate,
+      zone = excluded.zone,
+      area = excluded.area,
+      addresses = excluded.addresses,
+      notes = excluded.notes,
+      raw_data = excluded.raw_data,
+      updated_at = now();
+  `;
+
+  await pool.query(query, values);
 }
 
 async function findCustomerProfile(query) {
@@ -67,29 +129,13 @@ async function findCustomerProfile(query) {
 
   const result = await pool.query(
     `
-      select
-        customer_name,
-        primary_phone,
-        duplicate_check_phone,
-        phones,
-        governorate,
-        zone,
-        area,
-        addresses,
-        notes,
-        updated_at
+      select *
       from customer_profiles
       where $1 = any(phones)
         or primary_phone = $1
         or duplicate_check_phone = $1
         or customer_name ilike $2
-      order by
-        case
-          when primary_phone = $1 then 0
-          when $1 = any(phones) then 1
-          else 2
-        end,
-        updated_at desc
+      order by updated_at desc
       limit 1
     `,
     [value, `%${value}%`],
@@ -99,23 +145,91 @@ async function findCustomerProfile(query) {
 }
 
 async function countCustomerProfiles() {
+  const result = await pool.query(`
+    select
+      count(*)::int as total_customers,
+      coalesce(sum(cardinality(phones)), 0)::int as total_phone_numbers,
+      coalesce(sum(cardinality(addresses)), 0)::int as total_addresses
+    from customer_profiles
+  `);
+
+  return result.rows[0];
+}
+
+async function getBotAccessUser(telegramId) {
+  await ensureAccessTable();
+
   const result = await pool.query(
     `
-      select
-        count(*)::int as total_customers,
-        coalesce(sum(cardinality(phones)), 0)::int as total_phone_numbers,
-        coalesce(sum(cardinality(addresses)), 0)::int as total_addresses
-      from customer_profiles
+      select telegram_id, role, added_by, created_at, updated_at
+      from bot_access_users
+      where telegram_id = $1
+      limit 1
     `,
+    [String(telegramId)],
+  );
+
+  return result.rows[0] || null;
+}
+
+async function upsertBotAccessUser(telegramId, role, addedBy) {
+  await ensureAccessTable();
+
+  const result = await pool.query(
+    `
+      insert into bot_access_users (telegram_id, role, added_by, updated_at)
+      values ($1, $2, $3, now())
+      on conflict (telegram_id)
+      do update set
+        role = excluded.role,
+        added_by = excluded.added_by,
+        updated_at = now()
+      returning telegram_id, role
+    `,
+    [String(telegramId), role, addedBy ? String(addedBy) : null],
   );
 
   return result.rows[0];
 }
 
+async function removeBotAccessUser(telegramId, role = null) {
+  await ensureAccessTable();
+
+  const result = await pool.query(
+    `
+      delete from bot_access_users
+      where telegram_id = $1
+        and ($2::text is null or role = $2)
+      returning telegram_id, role
+    `,
+    [String(telegramId), role],
+  );
+
+  return result.rows[0] || null;
+}
+
+async function listBotAccessUsers() {
+  await ensureAccessTable();
+
+  const result = await pool.query(
+    `
+      select telegram_id, role, added_by, updated_at
+      from bot_access_users
+      order by role, telegram_id
+    `,
+  );
+
+  return result.rows;
+}
+
 module.exports = {
   pool,
   testConnection,
-  upsertCustomerProfile,
+  upsertCustomerProfiles,
   findCustomerProfile,
   countCustomerProfiles,
+  getBotAccessUser,
+  upsertBotAccessUser,
+  removeBotAccessUser,
+  listBotAccessUsers,
 };
