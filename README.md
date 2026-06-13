@@ -91,11 +91,23 @@ The bot syncs customer data directly from a Google Sheet. Setup is required.
 
 5. **Configure Environment Variables:**
    ```env
-   GOOGLE_SHEETS_CREDENTIALS={"type":"service_account","project_id":"..."}
+   GOOGLE_SHEETS_CREDENTIALS={"type":"service_account","project_id":"...",...}
    GOOGLE_SHEET_ID=1kc_LVn-KyxUuBhY37rLpC5BvkfCC15MiTbEfLS5055w
    GOOGLE_SHEET_NAME=Data
    SYNC_INTERVAL_MINUTES=10
    ```
+
+   If your environment cannot store the full JSON safely, use a file path instead:
+   ```env
+   GOOGLE_SHEETS_CREDENTIALS_PATH=/path/to/service-account.json
+   ```
+   Then place the JSON file on the server and do not store the raw key directly in `.env`.
+
+   If the environment cannot safely hold the full JSON, you can instead set:
+   ```env
+   GOOGLE_SHEETS_CREDENTIALS_PATH=/path/to/your/service-account.json
+   ```
+   Then keep the JSON file on the server and do not store it directly in `.env`.
 
 ### Google Sheet Column Format
 

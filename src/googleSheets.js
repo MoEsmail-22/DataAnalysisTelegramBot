@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const fs = require("fs");
 const { google } = require("googleapis");
 
 /**
@@ -13,23 +14,40 @@ let syncInterval = null;
 /**
  * Initialize Google Sheets API client
  * Expects GOOGLE_SHEETS_CREDENTIALS as JSON string in env
+ * or GOOGLE_SHEETS_CREDENTIALS_PATH pointing to a JSON file.
  */
 function initializeSheets() {
-  const credentialsJson = process.env.GOOGLE_SHEETS_CREDENTIALS;
-  if (!credentialsJson) {
+  const rawCredentials =
+    process.env.GOOGLE_SHEETS_CREDENTIALS ||
+    process.env.GOOGLE_SHEETS_CREDENTIALS_PATH;
+
+  if (!rawCredentials) {
     throw new Error(
-      "GOOGLE_SHEETS_CREDENTIALS environment variable is not set. " +
-        "Set it to the full JSON content of your service account key file.",
+      "Google Sheets credentials are not configured. " +
+        "Set GOOGLE_SHEETS_CREDENTIALS to the full JSON content of your service account key file, or set GOOGLE_SHEETS_CREDENTIALS_PATH to a key file path.",
     );
   }
 
+  let credentialsJson = rawCredentials.trim();
   let credentials;
+
+  if (!credentialsJson.startsWith("{")) {
+    if (!fs.existsSync(credentialsJson)) {
+      throw new Error(
+        "GOOGLE_SHEETS_CREDENTIALS_PATH does not point to an existing file. " +
+          "Use a valid file path or set GOOGLE_SHEETS_CREDENTIALS to the JSON content.",
+      );
+    }
+
+    credentialsJson = fs.readFileSync(credentialsJson, "utf8");
+  }
+
   try {
     credentials = JSON.parse(credentialsJson);
   } catch (error) {
     throw new Error(
       "GOOGLE_SHEETS_CREDENTIALS is not valid JSON. " +
-        "It should be the full JSON content of your service account key file.",
+        "It should be the full JSON content of your service account key file, or the file at GOOGLE_SHEETS_CREDENTIALS_PATH should contain valid JSON.",
     );
   }
 
