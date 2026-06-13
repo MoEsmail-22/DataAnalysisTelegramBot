@@ -11,6 +11,7 @@ const {
   upsertCustomerProfiles,
 } = require("./db");
 const { normalizePhone, parseCustomerProfilesFromExcel } = require("./excel");
+const { syncGoogleSheet } = require("./googleSheets");
 const { adminIds } = require("./config");
 const {
   formatCustomerProfile,
@@ -346,6 +347,36 @@ function registerHandlers(bot, options = {}) {
     }
   });
 
+  bot.onText(/^\/sync$/, async (msg) => {
+    const role = await getRole(msg);
+    if (!(await requireImportAccess(bot, msg, role))) return;
+
+    try {
+      const chatId = msg.chat.id;
+      const statusMessage = await bot.sendMessage(
+        chatId,
+        "جاري مزامنة البيانات من Google Sheet...",
+        keyboardForRole(role),
+      );
+
+      const result = await syncGoogleSheet(upsertCustomerProfiles);
+
+      await editStatus(
+        bot,
+        statusMessage,
+        result.message,
+        role,
+      );
+    } catch (error) {
+      console.error(error);
+      await bot.sendMessage(
+        msg.chat.id,
+        "فشلت المزامنة. راجع سجلات السيرفر.",
+        keyboardForRole(role),
+      );
+    }
+  });
+
   bot.on("document", async (msg) => {
     const role = await getRole(msg);
     if (!(await requireImportAccess(bot, msg, role))) return;
@@ -519,6 +550,29 @@ function registerHandlers(bot, options = {}) {
       if (/^(stats|إحصائيات)$/i.test(text)) {
         if (!(await requireImportAccess(bot, msg, role))) return;
         await sendStats(bot, chatId, role);
+        return;
+      }
+
+      if (/^(sync|مزامنة)$/i.test(text)) {
+        if (!(await requireImportAccess(bot, msg, role))) return;
+        const statusMessage = await bot.sendMessage(
+          chatId,
+          "جاري مزامنة البيانات من Google Sheet...",
+          keyboardForRole(role),
+        );
+
+        try {
+          const result = await syncGoogleSheet(upsertCustomerProfiles);
+          await editStatus(bot, statusMessage, result.message, role);
+        } catch (error) {
+          console.error(error);
+          await editStatus(
+            bot,
+            statusMessage,
+            "فشلت المزامنة. راجع سجلات السيرفر.",
+            role,
+          );
+        }
         return;
       }
 

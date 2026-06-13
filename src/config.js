@@ -33,6 +33,7 @@ const commands = [
   { command: "import", description: "رفع ملف Excel" },
   { command: "search", description: "بحث برقم الهاتف أو الاسم" },
   { command: "stats", description: "إحصائيات البيانات" },
+  { command: "sync", description: "مزامنة من Google Sheet يدويا" },
 ];
 
 module.exports = {
