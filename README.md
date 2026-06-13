@@ -142,3 +142,22 @@ Your Google Sheet must have these columns (can be in any order):
 ## Deployment
 
 For hosting platforms such as `cloud.tranger.xyz`, push the latest code to GitHub, then redeploy/restart the bot from the hosting dashboard. Make sure the hosting environment variables match the `.env` values above.
+
+## Recent Updates
+
+- Replaced Excel upload/import flow with direct Google Sheets sync.
+- Added `src/googleSheets.js` to read and normalize rows from a Google Sheet and upsert them into PostgreSQL/Supabase.
+- Added periodic sync (configurable with `SYNC_INTERVAL_MINUTES`) and a manual `/sync` command (admins only).
+- Updated command buttons and help text to remove Excel references and surface the new `مزامنة` (sync) action.
+
+## Troubleshooting
+
+- "Google Sheet is empty" or "tab not found": verify `GOOGLE_SHEET_NAME` exactly matches the sheet tab title (case and spacing matter). The bot logs available tab names on sync attempts.
+- `ETELEGRAM: 409 Conflict`: indicates another bot instance is running (or webhook/polling conflict). Stop other node processes or disable the webhook before starting the bot locally.
+- If manual `/sync` returns no parsed profiles, check the header row in the sheet — the bot expects the columns listed above (aliases are flexible but must match one of the known headers).
+
+## Security Notes
+
+- Do NOT commit your Google service account JSON key to the repository. GitHub push protection will block pushes that contain secrets (and this project has secret scanning enabled).
+- Prefer `GOOGLE_SHEETS_CREDENTIALS_PATH` pointing to a JSON file stored on the server, and keep that file out of version control (add it to `.gitignore`).
+
