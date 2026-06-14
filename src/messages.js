@@ -1,6 +1,9 @@
 function formatList(title, values) {
   if (!Array.isArray(values) || values.length === 0) return null;
-  return [title, ...values.map((value, index) => `${index + 1}. ${value}`)].join("\n");
+  return [
+    title,
+    ...values.map((value, index) => `${index + 1}. ${value}`),
+  ].join("\n");
 }
 
 function formatCustomerProfile(profile) {
@@ -26,24 +29,13 @@ function helpText() {
     "اختار من القائمة أو اكتب أمر بالعربي:",
     "",
     "رقمي - إظهار رقم حسابك في تيليجرام",
-    "رفع - طريقة رفع ملف Excel",
+    "تحدتث البينات - تحدتث البينات البيانات من Google Sheet",
     "بحث 010xxxxxxxx - البحث برقم الهاتف",
     "بحث اسم العميل - البحث باسم العميل",
     "إحصائيات - إحصائيات البيانات",
     "مساعدة - عرض المساعدة",
     "",
     "يمكنك أيضا إرسال رقم الهاتف أو اسم العميل مباشرة بدون كتابة كلمة بحث.",
-  ].join("\n");
-}
-
-function importHelpText() {
-  return [
-    "ارفع ملف Excel هنا بصيغة .xlsx أو .xls أو .csv.",
-    "",
-    "الأعمدة المدعومة في الملف الرئيسي:",
-    "الهاتف 001، اسم العميل، الهاتف 0012، الهاتف 002، الهاتف 003",
-    "المحافظة، Zone، Area",
-    "العنوان، العنوان 02، العنوان 03، ملحوظة",
   ].join("\n");
 }
 
@@ -58,6 +50,5 @@ function statsText(stats) {
 module.exports = {
   formatCustomerProfile,
   helpText,
-  importHelpText,
   statsText,
 };

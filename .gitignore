@@ -1,5 +1,7 @@
 node_modules/
 downloads/
 .env
+elhamy-bot-*.json
+service-account*.json
 npm-debug.log*
 .DS_Store
