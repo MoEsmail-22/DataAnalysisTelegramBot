@@ -10,18 +10,42 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SHEETS_BASE_URL = "https://sheets.googleapis.com/v4/spreadsheets";
 
 const HEADER_ALIASES = {
-  primary_phone: ["\u0627\u0644\u0647\u0627\u062a\u0641 001", "phone", "primary_phone"],
-  customer_name: ["\u0627\u0633\u0645 \u0627\u0644\u0639\u0645\u064a\u0644", "customer_name", "name"],
-  duplicate_phone: ["\u0627\u0644\u0647\u0627\u062a\u0641 0012", "duplicate_phone"],
+  primary_phone: [
+    "\u0627\u0644\u0647\u0627\u062a\u0641 001",
+    "phone",
+    "primary_phone",
+  ],
+  customer_name: [
+    "\u0627\u0633\u0645 \u0627\u0644\u0639\u0645\u064a\u0644",
+    "customer_name",
+    "name",
+  ],
+  duplicate_phone: [
+    "\u0627\u0644\u0647\u0627\u062a\u0641 0012",
+    "duplicate_phone",
+  ],
   phone_2: ["\u0627\u0644\u0647\u0627\u062a\u0641 002", "phone_2", "phone2"],
   phone_3: ["\u0627\u0644\u0647\u0627\u062a\u0641 003", "phone_3", "phone3"],
-  governorate: ["\u0627\u0644\u0645\u062d\u0627\u0641\u0638\u0629", "governorate", "city"],
+  governorate: [
+    "\u0627\u0644\u0645\u062d\u0627\u0641\u0638\u0629",
+    "governorate",
+    "city",
+  ],
   zone: ["zone", "Zone"],
   area: ["area", "Area"],
-  address_1: ["\u0627\u0644\u0639\u0646\u0648\u0627\u0646", "address", "address_1"],
+  address_1: [
+    "\u0627\u0644\u0639\u0646\u0648\u0627\u0646",
+    "address",
+    "address_1",
+  ],
   address_2: ["\u0627\u0644\u0639\u0646\u0648\u0627\u0646 02", "address_2"],
   address_3: ["\u0627\u0644\u0639\u0646\u0648\u0627\u0646 03", "address_3"],
-  notes: ["\u0645\u0644\u062d\u0648\u0638\u0629", "\u0627\u0644\u0645\u0644\u0627\u062d\u0638\u0627\u062a", "notes", "note"],
+  notes: [
+    "\u0645\u0644\u062d\u0648\u0638\u0629",
+    "\u0627\u0644\u0645\u0644\u0627\u062d\u0638\u0627\u062a",
+    "notes",
+    "note",
+  ],
 };
 
 function base64Url(input) {
@@ -48,7 +72,11 @@ function normalizeArabicDigits(value) {
 }
 
 function cleanText(value) {
-  return String(value || "").replace(/\s+/g, " ").trim() || null;
+  return (
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim() || null
+  );
 }
 
 function normalizePhone(value) {
@@ -73,7 +101,10 @@ function unique(values) {
 }
 
 function makeHash(profile) {
-  return crypto.createHash("sha256").update(JSON.stringify(profile)).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(profile))
+    .digest("hex");
 }
 
 function loadCredentials() {
@@ -85,7 +116,10 @@ function loadCredentials() {
     );
   } else if (process.env.GOOGLE_SHEETS_CREDENTIALS_BASE64) {
     credentials = JSON.parse(
-      Buffer.from(process.env.GOOGLE_SHEETS_CREDENTIALS_BASE64, "base64").toString("utf8"),
+      Buffer.from(
+        process.env.GOOGLE_SHEETS_CREDENTIALS_BASE64,
+        "base64",
+      ).toString("utf8"),
     );
   } else if (process.env.GOOGLE_SHEETS_CREDENTIALS) {
     credentials = JSON.parse(process.env.GOOGLE_SHEETS_CREDENTIALS);
@@ -100,7 +134,9 @@ function loadCredentials() {
     .trim();
 
   if (!credentials.client_email || !credentials.private_key) {
-    throw new Error("Google credentials must include client_email and private_key.");
+    throw new Error(
+      "Google credentials must include client_email and private_key.",
+    );
   }
 
   crypto.createPrivateKey(credentials.private_key);
@@ -118,7 +154,11 @@ function createJwt(credentials) {
     iat: now,
   };
   const unsigned = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(payload))}`;
-  const signature = crypto.sign("RSA-SHA256", Buffer.from(unsigned), credentials.private_key);
+  const signature = crypto.sign(
+    "RSA-SHA256",
+    Buffer.from(unsigned),
+    credentials.private_key,
+  );
   return `${unsigned}.${base64Url(signature)}`;
 }
 
@@ -140,7 +180,9 @@ async function getAccessToken() {
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(`${data.error || response.status}: ${data.error_description || data.error || response.statusText}`);
+    throw new Error(
+      `${data.error || response.status}: ${data.error_description || data.error || response.statusText}`,
+    );
   }
 
   cachedToken = {
@@ -171,7 +213,8 @@ function mapRow(headers, row) {
     const index = headers.findIndex((header) =>
       aliases.some(
         (alias) =>
-          normalizeHeader(alias).toLowerCase() === normalizeHeader(header).toLowerCase(),
+          normalizeHeader(alias).toLowerCase() ===
+          normalizeHeader(header).toLowerCase(),
       ),
     );
     mapped[field] = index === -1 ? "" : row[index];
@@ -192,7 +235,9 @@ function findHeaderRow(rows) {
     "\u0627\u0644\u0639\u0646\u0648\u0627\u0646",
   ];
   const index = rows.findIndex((row) =>
-    headerWords.some((word) => row.some((cell) => normalizeHeader(cell) === word)),
+    headerWords.some((word) =>
+      row.some((cell) => normalizeHeader(cell) === word),
+    ),
   );
 
   return index === -1 ? 0 : index;
@@ -235,7 +280,9 @@ function sheetsRowsToProfiles(rows) {
         addresses,
         notes: cleanText(mapped.notes),
         rawData: storeRawData
-          ? Object.fromEntries(headers.map((header, index) => [header, row[index] || ""]))
+          ? Object.fromEntries(
+              headers.map((header, index) => [header, row[index] || ""]),
+            )
           : {},
       };
 
@@ -251,7 +298,9 @@ function sheetsRowsToProfiles(rows) {
 }
 
 async function getSpreadsheetTabNames(sheetId) {
-  const data = await googleGet(`/${encodeURIComponent(sheetId)}?fields=sheets.properties.title`);
+  const data = await googleGet(
+    `/${encodeURIComponent(sheetId)}?fields=sheets.properties.title`,
+  );
   return (data.sheets || [])
     .map((sheet) => sheet.properties?.title)
     .filter(Boolean);
@@ -296,7 +345,10 @@ async function readGoogleSheet(sheetId, sheetName) {
 }
 
 function shouldDeleteMissingRows() {
-  return String(process.env.GOOGLE_SYNC_DELETE_MISSING || "true").toLowerCase() !== "false";
+  return (
+    String(process.env.GOOGLE_SYNC_DELETE_MISSING || "true").toLowerCase() !==
+    "false"
+  );
 }
 
 async function syncGoogleSheet(upsertFunction, deleteMissingFunction) {
@@ -323,18 +375,22 @@ async function syncGoogleSheet(upsertFunction, deleteMissingFunction) {
     await upsertFunction(result.profiles);
 
     let deletedCount = 0;
+    // The background deletion remains fully active here:
     if (shouldDeleteMissingRows() && deleteMissingFunction) {
       deletedCount = await deleteMissingFunction(
         result.profiles.map((profile) => profile.sourceHash),
       );
     }
 
+    // Server log will still track it for you:
     console.log(
-      `Successfully synced ${result.profiles.length} profiles from Google Sheet. Deleted ${deletedCount} missing profiles.`,
+      `Successfully synced ${result.profiles.length} profiles from Google Sheet. Background deleted ${deletedCount} missing profiles.`,
     );
+
+    // The user will only see the total synced profiles text:
     return {
       status: "success",
-      message: `Synced ${result.profiles.length} profiles. Deleted ${deletedCount} missing profiles.`,
+      message: `Synced ${result.profiles.length} profiles.`,
       profilesCount: result.profiles.length,
       deletedCount,
     };
@@ -347,19 +403,27 @@ async function syncGoogleSheet(upsertFunction, deleteMissingFunction) {
   }
 }
 
-function startPeriodicSync(upsertFunction, deleteMissingFunction, intervalMinutes = 10) {
+function startPeriodicSync(
+  upsertFunction,
+  deleteMissingFunction,
+  intervalMinutes = 10,
+) {
   if (syncInterval) {
     console.warn("Periodic sync is already running");
     return;
   }
 
   if (!process.env.GOOGLE_SHEET_ID) {
-    console.log("GOOGLE_SHEET_ID not set. Periodic Google Sheets sync disabled.");
+    console.log(
+      "GOOGLE_SHEET_ID not set. Periodic Google Sheets sync disabled.",
+    );
     return;
   }
 
   const intervalMs = intervalMinutes * 60 * 1000;
-  console.log(`Starting periodic Google Sheets sync every ${intervalMinutes} minutes`);
+  console.log(
+    `Starting periodic Google Sheets sync every ${intervalMinutes} minutes`,
+  );
 
   syncGoogleSheet(upsertFunction, deleteMissingFunction).catch((error) => {
     console.error("Initial sync failed:", error.message);
