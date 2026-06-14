@@ -64,10 +64,21 @@ async function upsertCustomerProfiles(profiles) {
   }
 
   const normalizedProfiles = Array.from(groupedProfiles.values());
+  const chunkSize = Math.max(
+    1,
+    Number.parseInt(process.env.DB_UPSERT_CHUNK_SIZE || "250", 10),
+  );
+
+  for (let index = 0; index < normalizedProfiles.length; index += chunkSize) {
+    await upsertCustomerProfilesChunk(normalizedProfiles.slice(index, index + chunkSize));
+  }
+}
+
+async function upsertCustomerProfilesChunk(profiles) {
   const values = [];
   const placeholders = [];
 
-  normalizedProfiles.forEach((profile, index) => {
+  profiles.forEach((profile, index) => {
     const base = index * 11;
 
     placeholders.push(
@@ -138,10 +149,26 @@ async function findCustomerProfile(query) {
       order by updated_at desc
       limit 1
     `,
-    [value, `%${value}%`],
+    [value, `${value}%`],
   );
 
   return result.rows[0] || null;
+}
+
+async function deleteCustomerProfilesNotInHashes(sourceHashes) {
+  if (!Array.isArray(sourceHashes) || sourceHashes.length === 0) {
+    return 0;
+  }
+
+  const result = await pool.query(
+    `
+      delete from customer_profiles
+      where not (source_hash = any($1::text[]))
+    `,
+    [sourceHashes],
+  );
+
+  return result.rowCount || 0;
 }
 
 async function countCustomerProfiles() {
@@ -227,6 +254,7 @@ module.exports = {
   testConnection,
   upsertCustomerProfiles,
   findCustomerProfile,
+  deleteCustomerProfilesNotInHashes,
   countCustomerProfiles,
   getBotAccessUser,
   upsertBotAccessUser,

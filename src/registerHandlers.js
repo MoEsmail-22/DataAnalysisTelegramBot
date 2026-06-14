@@ -1,5 +1,6 @@
 const {
   countCustomerProfiles,
+  deleteCustomerProfilesNotInHashes,
   findCustomerProfile,
   getBotAccessUser,
   listBotAccessUsers,
@@ -169,8 +170,29 @@ async function sendStats(bot, chatId, role) {
 }
 
 async function searchAndReply(bot, chatId, query, role) {
-  const normalizedQuery = normalizePhone(query) || query;
-  const profile = await findCustomerProfile(normalizedQuery);
+  const normalizedPhone = normalizePhone(query);
+  let searchQuery = normalizedPhone;
+
+  if (!searchQuery) {
+    const nameWords = String(query || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter(Boolean);
+
+    if (nameWords.length < 2) {
+      await bot.sendMessage(
+        chatId,
+        "للبحث بالاسم اكتب أول اسمين على الأقل، مثال: محمد أحمد",
+        keyboardForRole(role),
+      );
+      return;
+    }
+
+    searchQuery = nameWords.slice(0, 2).join(" ");
+  }
+
+  const profile = await findCustomerProfile(searchQuery);
 
   if (!profile) {
     await bot.sendMessage(
@@ -354,7 +376,10 @@ function registerHandlers(bot, options = {}) {
         keyboardForRole(role),
       );
 
-      const result = await syncGoogleSheet(upsertCustomerProfiles);
+      const result = await syncGoogleSheet(
+        upsertCustomerProfiles,
+        deleteCustomerProfilesNotInHashes,
+      );
 
       await editStatus(bot, statusMessage, result.message, role);
     } catch (error) {
@@ -580,7 +605,10 @@ function registerHandlers(bot, options = {}) {
         );
 
         try {
-          const result = await syncGoogleSheet(upsertCustomerProfiles);
+          const result = await syncGoogleSheet(
+            upsertCustomerProfiles,
+            deleteCustomerProfilesNotInHashes,
+          );
           await editStatus(bot, statusMessage, result.message, role);
         } catch (error) {
           console.error(error);

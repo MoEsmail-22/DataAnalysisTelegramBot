@@ -2,24 +2,35 @@
 
 const crypto = require("crypto");
 const fs = require("fs");
-const { google } = require("googleapis");
 
 let syncInterval = null;
+let cachedToken = null;
+
+const TOKEN_URL = "https://oauth2.googleapis.com/token";
+const SHEETS_BASE_URL = "https://sheets.googleapis.com/v4/spreadsheets";
 
 const HEADER_ALIASES = {
-  primary_phone: ["الهاتف 001", "phone", "primary_phone"],
-  customer_name: ["اسم العميل", "customer_name", "name"],
-  duplicate_phone: ["الهاتف 0012", "duplicate_phone"],
-  phone_2: ["الهاتف 002", "phone_2", "phone2"],
-  phone_3: ["الهاتف 003", "phone_3", "phone3"],
-  governorate: ["المحافظة", "governorate", "city"],
+  primary_phone: ["\u0627\u0644\u0647\u0627\u062a\u0641 001", "phone", "primary_phone"],
+  customer_name: ["\u0627\u0633\u0645 \u0627\u0644\u0639\u0645\u064a\u0644", "customer_name", "name"],
+  duplicate_phone: ["\u0627\u0644\u0647\u0627\u062a\u0641 0012", "duplicate_phone"],
+  phone_2: ["\u0627\u0644\u0647\u0627\u062a\u0641 002", "phone_2", "phone2"],
+  phone_3: ["\u0627\u0644\u0647\u0627\u062a\u0641 003", "phone_3", "phone3"],
+  governorate: ["\u0627\u0644\u0645\u062d\u0627\u0641\u0638\u0629", "governorate", "city"],
   zone: ["zone", "Zone"],
   area: ["area", "Area"],
-  address_1: ["العنوان", "address", "address_1"],
-  address_2: ["العنوان 02", "address_2"],
-  address_3: ["العنوان 03", "address_3"],
-  notes: ["ملحوظة", "الملاحظات", "notes", "note"],
+  address_1: ["\u0627\u0644\u0639\u0646\u0648\u0627\u0646", "address", "address_1"],
+  address_2: ["\u0627\u0644\u0639\u0646\u0648\u0627\u0646 02", "address_2"],
+  address_3: ["\u0627\u0644\u0639\u0646\u0648\u0627\u0646 03", "address_3"],
+  notes: ["\u0645\u0644\u062d\u0648\u0638\u0629", "\u0627\u0644\u0645\u0644\u0627\u062d\u0638\u0627\u062a", "notes", "note"],
 };
+
+function base64Url(input) {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
 
 function normalizeHeader(value) {
   return String(value || "").trim();
@@ -65,76 +76,92 @@ function makeHash(profile) {
   return crypto.createHash("sha256").update(JSON.stringify(profile)).digest("hex");
 }
 
-function parseCredentialsJson(rawValue) {
-  const trimmed = String(rawValue || "").trim();
-  if (!trimmed) return null;
+function loadCredentials() {
+  let credentials;
 
-  if (trimmed.startsWith("{")) {
-    return JSON.parse(trimmed);
-  }
-
-  if (fs.existsSync(trimmed)) {
-    return JSON.parse(fs.readFileSync(trimmed, "utf8"));
-  }
-
-  throw new Error(
-    "Google credentials value is not JSON and is not an existing file path.",
-  );
-}
-
-function normalizeCredentials(credentials) {
-  if (!credentials?.client_email || !credentials?.private_key) {
+  if (process.env.GOOGLE_SHEETS_CREDENTIALS_PATH) {
+    credentials = JSON.parse(
+      fs.readFileSync(process.env.GOOGLE_SHEETS_CREDENTIALS_PATH, "utf8"),
+    );
+  } else if (process.env.GOOGLE_SHEETS_CREDENTIALS_BASE64) {
+    credentials = JSON.parse(
+      Buffer.from(process.env.GOOGLE_SHEETS_CREDENTIALS_BASE64, "base64").toString("utf8"),
+    );
+  } else if (process.env.GOOGLE_SHEETS_CREDENTIALS) {
+    credentials = JSON.parse(process.env.GOOGLE_SHEETS_CREDENTIALS);
+  } else {
     throw new Error(
-      "Google credentials must include client_email and private_key.",
+      "Google credentials are missing. Set GOOGLE_SHEETS_CREDENTIALS_PATH, GOOGLE_SHEETS_CREDENTIALS_BASE64, or GOOGLE_SHEETS_CREDENTIALS.",
     );
   }
 
-  credentials.private_key = String(credentials.private_key)
+  credentials.private_key = String(credentials.private_key || "")
     .replace(/\\n/g, "\n")
     .trim();
 
-  try {
-    crypto.createPrivateKey(credentials.private_key);
-  } catch (error) {
-    throw new Error(
-      "Google private_key is not a valid private key. Generate a new service account JSON key.",
-    );
+  if (!credentials.client_email || !credentials.private_key) {
+    throw new Error("Google credentials must include client_email and private_key.");
   }
 
+  crypto.createPrivateKey(credentials.private_key);
   return credentials;
 }
 
-function loadCredentials() {
-  if (process.env.GOOGLE_SHEETS_CREDENTIALS_BASE64) {
-    const decoded = Buffer.from(
-      process.env.GOOGLE_SHEETS_CREDENTIALS_BASE64,
-      "base64",
-    ).toString("utf8");
-    return normalizeCredentials(JSON.parse(decoded));
-  }
-
-  if (process.env.GOOGLE_SHEETS_CREDENTIALS_PATH) {
-    return normalizeCredentials(parseCredentialsJson(process.env.GOOGLE_SHEETS_CREDENTIALS_PATH));
-  }
-
-  if (process.env.GOOGLE_SHEETS_CREDENTIALS) {
-    return normalizeCredentials(parseCredentialsJson(process.env.GOOGLE_SHEETS_CREDENTIALS));
-  }
-
-  throw new Error(
-    "Google Sheets credentials are not configured. Set GOOGLE_SHEETS_CREDENTIALS_BASE64, GOOGLE_SHEETS_CREDENTIALS_PATH, or GOOGLE_SHEETS_CREDENTIALS.",
-  );
+function createJwt(credentials) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "RS256", typ: "JWT" };
+  const payload = {
+    iss: credentials.client_email,
+    scope: "https://www.googleapis.com/auth/spreadsheets.readonly",
+    aud: TOKEN_URL,
+    exp: now + 3600,
+    iat: now,
+  };
+  const unsigned = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(payload))}`;
+  const signature = crypto.sign("RSA-SHA256", Buffer.from(unsigned), credentials.private_key);
+  return `${unsigned}.${base64Url(signature)}`;
 }
 
-function initializeSheets() {
-  const credentials = loadCredentials();
-  const auth = new google.auth.JWT({
-    email: credentials.client_email,
-    key: credentials.private_key,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
-  });
+async function getAccessToken() {
+  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
+    return cachedToken.accessToken;
+  }
 
-  return google.sheets({ version: "v4", auth });
+  const credentials = loadCredentials();
+  const body = new URLSearchParams({
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion: createJwt(credentials),
+  });
+  const response = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(`${data.error || response.status}: ${data.error_description || data.error || response.statusText}`);
+  }
+
+  cachedToken = {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000,
+  };
+  return cachedToken.accessToken;
+}
+
+async function googleGet(path) {
+  const accessToken = await getAccessToken();
+  const response = await fetch(`${SHEETS_BASE_URL}${path}`, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error?.message || response.statusText);
+  }
+
+  return data;
 }
 
 function mapRow(headers, row) {
@@ -144,11 +171,9 @@ function mapRow(headers, row) {
     const index = headers.findIndex((header) =>
       aliases.some(
         (alias) =>
-          normalizeHeader(alias).toLowerCase() ===
-          normalizeHeader(header).toLowerCase(),
+          normalizeHeader(alias).toLowerCase() === normalizeHeader(header).toLowerCase(),
       ),
     );
-
     mapped[field] = index === -1 ? "" : row[index];
   }
 
@@ -160,7 +185,12 @@ function isEmptySheetRow(row) {
 }
 
 function findHeaderRow(rows) {
-  const headerWords = ["الهاتف 001", "اسم العميل", "المحافظة", "العنوان"];
+  const headerWords = [
+    "\u0627\u0644\u0647\u0627\u062a\u0641 001",
+    "\u0627\u0633\u0645 \u0627\u0644\u0639\u0645\u064a\u0644",
+    "\u0627\u0644\u0645\u062d\u0627\u0641\u0638\u0629",
+    "\u0627\u0644\u0639\u0646\u0648\u0627\u0646",
+  ];
   const index = rows.findIndex((row) =>
     headerWords.some((word) => row.some((cell) => normalizeHeader(cell) === word)),
   );
@@ -168,10 +198,15 @@ function findHeaderRow(rows) {
   return index === -1 ? 0 : index;
 }
 
+function shouldStoreRawData() {
+  return String(process.env.STORE_RAW_DATA || "").toLowerCase() === "true";
+}
+
 function sheetsRowsToProfiles(rows) {
   const headerRowIndex = findHeaderRow(rows);
   const headers = (rows[headerRowIndex] || []).map(normalizeHeader);
   const dataRows = rows.slice(headerRowIndex + 1);
+  const storeRawData = shouldStoreRawData();
 
   return dataRows
     .filter((row) => !isEmptySheetRow(row))
@@ -199,9 +234,9 @@ function sheetsRowsToProfiles(rows) {
         area: cleanText(mapped.area),
         addresses,
         notes: cleanText(mapped.notes),
-        rawData: Object.fromEntries(
-          headers.map((header, index) => [header, row[index] || ""]),
-        ),
+        rawData: storeRawData
+          ? Object.fromEntries(headers.map((header, index) => [header, row[index] || ""]))
+          : {},
       };
 
       profile.sourceHash = makeHash(profile);
@@ -215,72 +250,67 @@ function sheetsRowsToProfiles(rows) {
     );
 }
 
-async function getSpreadsheetTabNames(sheetsAPI, sheetId) {
-  const response = await sheetsAPI.spreadsheets.get({ spreadsheetId: sheetId });
-  return (response.data.sheets || [])
+async function getSpreadsheetTabNames(sheetId) {
+  const data = await googleGet(`/${encodeURIComponent(sheetId)}?fields=sheets.properties.title`);
+  return (data.sheets || [])
     .map((sheet) => sheet.properties?.title)
     .filter(Boolean);
 }
 
 function buildSheetRange(sheetName) {
-  if (!sheetName) return "";
-  if (sheetName.includes("!")) return sheetName;
-
-  const normalizedName = sheetName.replace(/'/g, "''");
-  return `'${normalizedName}'`;
+  const name = String(sheetName || "Data").replace(/'/g, "''");
+  return `'${name}'`;
 }
 
-async function readGoogleSheet(sheetsAPI, sheetId, sheetName) {
-  const tabs = await getSpreadsheetTabNames(sheetsAPI, sheetId);
+async function readGoogleSheet(sheetId, sheetName) {
+  const tabs = await getSpreadsheetTabNames(sheetId);
 
   if (!tabs.includes(sheetName)) {
     return {
       profiles: [],
       rowsCount: 0,
-      tabNames: tabs,
       message: `Google Sheet tab "${sheetName}" not found. Available tabs: ${tabs.join(", ")}`,
     };
   }
 
-  const response = await sheetsAPI.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: buildSheetRange(sheetName),
-  });
+  const range = encodeURIComponent(buildSheetRange(sheetName));
+  const data = await googleGet(
+    `/${encodeURIComponent(sheetId)}/values/${range}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`,
+  );
+  const rows = data.values || [];
 
-  const rows = response.data.values || [];
   if (rows.length === 0) {
     return {
       profiles: [],
       rowsCount: 0,
-      tabNames: tabs,
       message: `Google Sheet tab "${sheetName}" is empty.`,
     };
   }
 
   const profiles = sheetsRowsToProfiles(rows);
-
   return {
     profiles,
     rowsCount: Math.max(rows.length - 1, 0),
-    tabNames: tabs,
     message: `Parsed ${profiles.length} profiles from Google Sheet tab "${sheetName}".`,
   };
 }
 
-async function syncGoogleSheet(upsertFunction) {
+function shouldDeleteMissingRows() {
+  return String(process.env.GOOGLE_SYNC_DELETE_MISSING || "true").toLowerCase() !== "false";
+}
+
+async function syncGoogleSheet(upsertFunction, deleteMissingFunction) {
   if (!process.env.GOOGLE_SHEET_ID) {
     console.warn("GOOGLE_SHEET_ID not set. Google Sheets sync is disabled.");
     return { status: "disabled", message: "GOOGLE_SHEET_ID not configured" };
   }
 
   try {
-    const sheetsAPI = initializeSheets();
     const sheetId = process.env.GOOGLE_SHEET_ID;
     const sheetName = process.env.GOOGLE_SHEET_NAME || "Data";
 
     console.log(`Syncing from Google Sheet: ${sheetId}, range: ${sheetName}`);
-
-    const result = await readGoogleSheet(sheetsAPI, sheetId, sheetName);
+    const result = await readGoogleSheet(sheetId, sheetName);
 
     if (!result.profiles || result.profiles.length === 0) {
       return {
@@ -292,13 +322,21 @@ async function syncGoogleSheet(upsertFunction) {
 
     await upsertFunction(result.profiles);
 
+    let deletedCount = 0;
+    if (shouldDeleteMissingRows() && deleteMissingFunction) {
+      deletedCount = await deleteMissingFunction(
+        result.profiles.map((profile) => profile.sourceHash),
+      );
+    }
+
     console.log(
-      `Successfully synced ${result.profiles.length} profiles from Google Sheet`,
+      `Successfully synced ${result.profiles.length} profiles from Google Sheet. Deleted ${deletedCount} missing profiles.`,
     );
     return {
       status: "success",
-      message: `Synced ${result.profiles.length} profiles from Google Sheet`,
+      message: `Synced ${result.profiles.length} profiles. Deleted ${deletedCount} missing profiles.`,
       profilesCount: result.profiles.length,
+      deletedCount,
     };
   } catch (error) {
     console.error("Google Sheets sync failed:", error.message);
@@ -309,7 +347,7 @@ async function syncGoogleSheet(upsertFunction) {
   }
 }
 
-function startPeriodicSync(upsertFunction, intervalMinutes = 10) {
+function startPeriodicSync(upsertFunction, deleteMissingFunction, intervalMinutes = 10) {
   if (syncInterval) {
     console.warn("Periodic sync is already running");
     return;
@@ -323,12 +361,12 @@ function startPeriodicSync(upsertFunction, intervalMinutes = 10) {
   const intervalMs = intervalMinutes * 60 * 1000;
   console.log(`Starting periodic Google Sheets sync every ${intervalMinutes} minutes`);
 
-  syncGoogleSheet(upsertFunction).catch((error) => {
+  syncGoogleSheet(upsertFunction, deleteMissingFunction).catch((error) => {
     console.error("Initial sync failed:", error.message);
   });
 
   syncInterval = setInterval(() => {
-    syncGoogleSheet(upsertFunction).catch((error) => {
+    syncGoogleSheet(upsertFunction, deleteMissingFunction).catch((error) => {
       console.error("Periodic sync failed:", error.message);
     });
   }, intervalMs);

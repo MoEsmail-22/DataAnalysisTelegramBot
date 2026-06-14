@@ -3,5 +3,7 @@ downloads/
 .env
 elhamy-bot-*.json
 service-account*.json
+google-credentials.json
+google api/
 npm-debug.log*
 .DS_Store

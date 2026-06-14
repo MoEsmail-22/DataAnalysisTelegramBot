@@ -3,7 +3,12 @@ require("dotenv").config();
 const path = require("path");
 const TelegramBot = require("node-telegram-bot-api");
 const { commands } = require("./config");
-const { pool, testConnection, upsertCustomerProfiles } = require("./db");
+const {
+  deleteCustomerProfilesNotInHashes,
+  pool,
+  testConnection,
+  upsertCustomerProfiles,
+} = require("./db");
 const { registerHandlers } = require("./registerHandlers");
 const { startPeriodicSync } = require("./googleSheets");
 
@@ -54,7 +59,11 @@ testConnection()
       process.env.SYNC_INTERVAL_MINUTES || "10",
       10,
     );
-    startPeriodicSync(upsertCustomerProfiles, syncInterval);
+    startPeriodicSync(
+      upsertCustomerProfiles,
+      deleteCustomerProfilesNotInHashes,
+      syncInterval,
+    );
   })
   .catch((error) => {
     console.error("Database connection failed.");
