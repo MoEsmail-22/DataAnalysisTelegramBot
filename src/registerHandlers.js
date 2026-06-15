@@ -1,3 +1,6 @@
+const path = require("path");
+const os = require("os");
+const fs = require("fs").promises;
 const {
   countCustomerProfiles,
   deleteCustomerProfilesNotInHashes,
@@ -13,6 +16,7 @@ const { syncGoogleSheet } = require("./googleSheets");
 const { adminIds } = require("./config");
 const { formatCustomerProfile, helpText, statsText } = require("./messages");
 
+// ... باقي ملف الكود الخاص بك دون أي تعديل آخر ...
 const managementStates = new Map();
 
 function isMainAdminId(telegramId) {
@@ -50,7 +54,7 @@ function keyboardForRole(role) {
   }
 
   if (canImport(role)) {
-    rows.push([{ text: "تحدتث البينات" }, { text: "إحصائيات" }]);
+    rows.push([{ text: "تحديث البينات" }, { text: "إحصائيات" }]);
   }
 
   rows.push([{ text: "مساعدة" }, { text: "رقمي" }]);
@@ -147,7 +151,9 @@ async function editStatus(bot, message, text, role) {
   } catch (error) {
     console.error("Could not edit status message:", error.message);
 
-    if (String(error.message).toLowerCase().includes("message is not modified")) {
+    if (
+      String(error.message).toLowerCase().includes("message is not modified")
+    ) {
       return;
     }
 
@@ -217,7 +223,7 @@ async function showAccessManagement(bot, msg) {
       "إدارة المستخدمين:",
       "",
       "إضافة مستخدم: يسمح له بالبحث فقط.",
-      "إضافة أدمن: يسمح له بالبحث والتحدتث البينات من Google Sheet.",
+      "إضافة أدمن: يسمح له بالبحث والتحديث البينات من Google Sheet.",
       "حذف مستخدم/أدمن: إزالة الصلاحية من قاعدة البيانات.",
       "",
       "الـ main admins الموجودون في ADMIN_IDS لا يمكن حذفهم من هنا.",
@@ -271,7 +277,7 @@ async function handleManagementState(bot, msg, text) {
 
   if (state.action === "add_admin") {
     await upsertBotAccessUser(targetId, "admin", msg.from.id);
-    message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث والتحدتث البينات من Google Sheet.`;
+    message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث والتحديث البينات من Google Sheet.`;
   }
 
   if (state.action === "remove_user") {
@@ -372,7 +378,7 @@ function registerHandlers(bot, options = {}) {
       const chatId = msg.chat.id;
       const statusMessage = await bot.sendMessage(
         chatId,
-        "جاري تحدتث البينات البيانات من Google Sheet...",
+        "جاري تحديث البينات البيانات من Google Sheet...",
         keyboardForRole(role),
       );
 
@@ -386,7 +392,7 @@ function registerHandlers(bot, options = {}) {
       console.error(error);
       await bot.sendMessage(
         msg.chat.id,
-        "فشلت التحدتث البينات. راجع سجلات السيرفر.",
+        "فشلت التحديث البينات. راجع سجلات السيرفر.",
         keyboardForRole(role),
       );
     }
@@ -596,11 +602,11 @@ function registerHandlers(bot, options = {}) {
         return;
       }
 
-      if (/^(sync|تحدتث البينات)$/i.test(text)) {
+      if (/^(sync|تحديث البينات)$/i.test(text)) {
         if (!(await requireImportAccess(bot, msg, role))) return;
         const statusMessage = await bot.sendMessage(
           chatId,
-          "جاري تحدتث البينات البيانات من Google Sheet...",
+          "جاري تحديث البينات البيانات من Google Sheet...",
           keyboardForRole(role),
         );
 
@@ -615,7 +621,7 @@ function registerHandlers(bot, options = {}) {
           await editStatus(
             bot,
             statusMessage,
-            "فشلت التحدتث البينات. راجع سجلات السيرفر.",
+            "فشلت التحديث البينات. راجع سجلات السيرفر.",
             role,
           );
         }

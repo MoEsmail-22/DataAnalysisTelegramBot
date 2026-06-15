@@ -15,7 +15,7 @@ const allowedUserIds = new Set(
 const keyboard = {
   reply_markup: {
     keyboard: [
-      [{ text: "بحث" }, { text: "تحدتث البينات" }],
+      [{ text: "بحث" }, { text: "تحديث البينات" }],
       [{ text: "إحصائيات" }, { text: "مساعدة" }],
       [{ text: "رقمي" }],
     ],
@@ -32,7 +32,7 @@ const commands = [
   { command: "myid", description: "إظهار رقم حسابك" },
   { command: "search", description: "بحث برقم الهاتف أو الاسم" },
   { command: "stats", description: "إحصائيات البيانات" },
-  { command: "sync", description: "تحدتث البينات من Google Sheet يدويا" },
+  { command: "sync", description: "تحديث البينات من Google Sheet يدويا" },
 ];
 
 module.exports = {
