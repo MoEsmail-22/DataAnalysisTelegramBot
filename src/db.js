@@ -15,7 +15,10 @@ function unique(values) {
 }
 
 function makeHash(profile) {
-  return crypto.createHash("sha256").update(JSON.stringify(profile)).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(profile))
+    .digest("hex");
 }
 
 async function ensureAccessTable() {
@@ -53,21 +56,50 @@ async function upsertCustomerProfiles(profiles) {
     existing.customerName = existing.customerName || profile.customerName;
     existing.duplicateCheckPhone =
       existing.duplicateCheckPhone || profile.duplicateCheckPhone;
-    existing.phones = unique([...existing.phones, ...profile.phones]);
+
+    // OPTIMIZATION: Mutate arrays in-place to cut down Garbage Collection memory spikes
+    if (profile.phones?.length) {
+      existing.phones.push(...profile.phones);
+      existing.phones = unique(existing.phones);
+    }
+
     existing.governorate = existing.governorate || profile.governorate;
     existing.zone = existing.zone || profile.zone;
     existing.area = existing.area || profile.area;
-    existing.addresses = unique([...existing.addresses, ...profile.addresses]);
+
+    if (profile.addresses?.length) {
+      existing.addresses.push(...profile.addresses);
+      existing.addresses = unique(existing.addresses);
+    }
+
     existing.notes = existing.notes || profile.notes;
-    existing.rawData = { ...existing.rawData, ...profile.rawData };
+
+    // Only merge raw data if explicitly turned on to conserve memory overhead
+    if (String(process.env.STORE_RAW_DATA || "").toLowerCase() === "true") {
+      existing.rawData = { ...existing.rawData, ...profile.rawData };
+    }
+
     existing.sourceHash = makeHash(existing);
   }
 
   const normalizedProfiles = Array.from(groupedProfiles.values());
+  const chunkSize = Math.max(
+    1,
+    Number.parseInt(process.env.DB_UPSERT_CHUNK_SIZE || "250", 10),
+  );
+
+  for (let index = 0; index < normalizedProfiles.length; index += chunkSize) {
+    await upsertCustomerProfilesChunk(
+      normalizedProfiles.slice(index, index + chunkSize),
+    );
+  }
+}
+
+async function upsertCustomerProfilesChunk(profiles) {
   const values = [];
   const placeholders = [];
 
-  normalizedProfiles.forEach((profile, index) => {
+  profiles.forEach((profile, index) => {
     const base = index * 11;
 
     placeholders.push(
@@ -86,7 +118,7 @@ async function upsertCustomerProfiles(profiles) {
       profile.area,
       profile.addresses,
       profile.notes,
-      profile.rawData,
+      profile.rawData || {},
     );
   });
 
@@ -138,10 +170,26 @@ async function findCustomerProfile(query) {
       order by updated_at desc
       limit 1
     `,
-    [value, `%${value}%`],
+    [value, `${value}%`],
   );
 
   return result.rows[0] || null;
+}
+
+async function deleteCustomerProfilesNotInHashes(sourceHashes) {
+  if (!Array.isArray(sourceHashes) || sourceHashes.length === 0) {
+    return 0;
+  }
+
+  const result = await pool.query(
+    `
+      delete from customer_profiles
+      where not (source_hash = any($1::text[]))
+    `,
+    [sourceHashes],
+  );
+
+  return result.rowCount || 0;
 }
 
 async function countCustomerProfiles() {
@@ -213,9 +261,9 @@ async function listBotAccessUsers() {
 
   const result = await pool.query(
     `
-      select telegram_id, role, added_by, updated_at
+      select telegram_id, role, added_by, created_at, updated_at
       from bot_access_users
-      order by role, telegram_id
+      order by role asc, created_at desc
     `,
   );
 
@@ -227,6 +275,7 @@ module.exports = {
   testConnection,
   upsertCustomerProfiles,
   findCustomerProfile,
+  deleteCustomerProfilesNotInHashes,
   countCustomerProfiles,
   getBotAccessUser,
   upsertBotAccessUser,
