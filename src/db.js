@@ -204,6 +204,26 @@ async function countCustomerProfiles() {
   return result.rows[0];
 }
 
+async function getAllCustomerProfiles() {
+  const result = await pool.query(`
+    select
+      customer_name,
+      primary_phone,
+      duplicate_check_phone,
+      phones,
+      governorate,
+      zone,
+      area,
+      addresses,
+      notes,
+      updated_at
+    from customer_profiles
+    order by updated_at desc, customer_name asc
+  `);
+
+  return result.rows;
+}
+
 async function getBotAccessUser(telegramId) {
   await ensureAccessTable();
 
@@ -277,6 +297,7 @@ module.exports = {
   findCustomerProfile,
   deleteCustomerProfilesNotInHashes,
   countCustomerProfiles,
+  getAllCustomerProfiles,
   getBotAccessUser,
   upsertBotAccessUser,
   removeBotAccessUser,
