@@ -1,14 +1,19 @@
+const path = require("path");
+const os = require("os");
+const fs = require("fs").promises;
+const XLSX = require("xlsx");
 const {
   countCustomerProfiles,
   deleteCustomerProfilesNotInHashes,
   findCustomerProfile,
+  getAllCustomerProfiles,
   getBotAccessUser,
   listBotAccessUsers,
   removeBotAccessUser,
   upsertBotAccessUser,
   upsertCustomerProfiles,
 } = require("./db");
-const { normalizePhone } = require("./excel");
+const { normalizePhone, parseCustomerProfilesFromExcel } = require("./excel");
 const { syncGoogleSheet } = require("./googleSheets");
 const { adminIds } = require("./config");
 const { formatCustomerProfile, helpText, statsText } = require("./messages");
@@ -50,7 +55,8 @@ function keyboardForRole(role) {
   }
 
   if (canImport(role)) {
-    rows.push([{ text: "تحدتث البينات" }, { text: "إحصائيات" }]);
+    rows.push([{ text: "تحديث البيانات" }, { text: "إحصائيات" }]);
+    rows.push([{ text: "تصدير Excel" }]);
   }
 
   rows.push([{ text: "مساعدة" }, { text: "رقمي" }]);
@@ -87,7 +93,13 @@ function managementKeyboard() {
 }
 
 function isTelegramId(value) {
-  return /^\d{4,20}$/.test(String(value || "").trim());
+  const text = String(value || "").trim();
+  const normalizedPhone = normalizePhone(text);
+  if (normalizedPhone && /^01\d{9}$/.test(normalizedPhone)) {
+    return false;
+  }
+
+  return /^[1-9]\d{4,19}$/.test(text);
 }
 
 async function requireSearchAccess(bot, msg, role) {
@@ -147,7 +159,9 @@ async function editStatus(bot, message, text, role) {
   } catch (error) {
     console.error("Could not edit status message:", error.message);
 
-    if (String(error.message).toLowerCase().includes("message is not modified")) {
+    if (
+      String(error.message).toLowerCase().includes("message is not modified")
+    ) {
       return;
     }
 
@@ -167,6 +181,84 @@ async function editStatus(bot, message, text, role) {
 async function sendStats(bot, chatId, role) {
   const stats = await countCustomerProfiles();
   await bot.sendMessage(chatId, statsText(stats), keyboardForRole(role));
+}
+
+function valueAt(values, index) {
+  return Array.isArray(values) ? values[index] || "" : "";
+}
+
+async function exportLatestData(bot, chatId, role) {
+  const profiles = await getAllCustomerProfiles();
+  const rows = [
+    ["1", "2", "3", "0", "5", "6", "7", "8", "9", "10", "11", ""],
+    [
+      "الهاتف 001",
+      "اسم العميل",
+      "الهاتف 0012",
+      "الهاتف 002",
+      "الهاتف 003",
+      "المحافظة",
+      "Zone",
+      "Area",
+      "العنوان",
+      "العنوان 02",
+      "العنوان 03",
+      "ملحوظة",
+    ],
+    ...profiles.map((profile) => {
+      const phones = Array.isArray(profile.phones) ? profile.phones : [];
+      const addresses = Array.isArray(profile.addresses) ? profile.addresses : [];
+
+      return [
+        profile.primary_phone || valueAt(phones, 0),
+        profile.customer_name || "",
+        profile.duplicate_check_phone || profile.primary_phone || valueAt(phones, 0),
+        valueAt(phones, 1),
+        valueAt(phones, 2),
+        profile.governorate || "",
+        profile.zone || "",
+        profile.area || "",
+        valueAt(addresses, 0),
+        valueAt(addresses, 1),
+        valueAt(addresses, 2),
+        profile.notes || "",
+      ];
+    }),
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  worksheet["!cols"] = [
+    { wch: 16 },
+    { wch: 28 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 18 },
+    { wch: 20 },
+    { wch: 20 },
+    { wch: 70 },
+    { wch: 45 },
+    { wch: 45 },
+    { wch: 30 },
+  ];
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Data");
+
+  const filePath = path.join(
+    os.tmpdir(),
+    `latest-customers-${Date.now()}.xlsx`,
+  );
+  XLSX.writeFile(workbook, filePath);
+
+  try {
+    await bot.sendDocument(chatId, filePath, {
+      caption: `تم تصدير ${profiles.length} عميل.`,
+      ...keyboardForRole(role),
+    });
+  } finally {
+    await fs.rm(filePath, { force: true });
+  }
 }
 
 async function searchAndReply(bot, chatId, query, role) {
@@ -217,7 +309,7 @@ async function showAccessManagement(bot, msg) {
       "إدارة المستخدمين:",
       "",
       "إضافة مستخدم: يسمح له بالبحث فقط.",
-      "إضافة أدمن: يسمح له بالبحث والتحدتث البينات من Google Sheet.",
+      "إضافة أدمن: يسمح له بالبحث والتحديث البيانات من Google Sheet.",
       "حذف مستخدم/أدمن: إزالة الصلاحية من قاعدة البيانات.",
       "",
       "الـ main admins الموجودون في ADMIN_IDS لا يمكن حذفهم من هنا.",
@@ -253,9 +345,35 @@ async function handleManagementState(bot, msg, text) {
   }
 
   if (!isTelegramId(text)) {
+    const normalizedPhone = normalizePhone(text);
+    const lookupText = normalizedPhone || String(text || "").trim();
+    const profile = lookupText ? await findCustomerProfile(lookupText) : null;
+
+    if (profile) {
+      await bot.sendMessage(
+        msg.chat.id,
+        [
+          "تم العثور على عميل بهذا الاسم أو الرقم:",
+          profile.customer_name ? `الاسم: ${profile.customer_name}` : null,
+          Array.isArray(profile.phones) && profile.phones.length
+            ? `الأرقام: ${profile.phones.join(" | ")}`
+            : null,
+          "",
+          "لكن لا يمكن إضافة أو حذف صلاحية Telegram باستخدام اسم العميل أو رقم الهاتف.",
+          "Telegram لا يعطي البوت Telegram ID من رقم الهاتف.",
+          "اطلب من المستخدم إرسال: رقمي",
+          "ثم أرسل Telegram ID هنا.",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        managementKeyboard(),
+      );
+      return true;
+    }
+
     await bot.sendMessage(
       msg.chat.id,
-      "أرسل Telegram ID صحيحا كأرقام فقط، أو اكتب رجوع للإلغاء.",
+      "أرسل Telegram ID صحيحا، أو اكتب رقم/اسم عميل موجود لعرضه، أو اكتب رجوع للإلغاء.",
       managementKeyboard(),
     );
     return true;
@@ -271,7 +389,7 @@ async function handleManagementState(bot, msg, text) {
 
   if (state.action === "add_admin") {
     await upsertBotAccessUser(targetId, "admin", msg.from.id);
-    message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث والتحدتث البينات من Google Sheet.`;
+    message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث والتحديث البيانات من Google Sheet.`;
   }
 
   if (state.action === "remove_user") {
@@ -364,6 +482,23 @@ function registerHandlers(bot, options = {}) {
     }
   });
 
+  bot.onText(/^\/export$/, async (msg) => {
+    const role = await getRole(msg);
+    if (!(await requireImportAccess(bot, msg, role))) return;
+
+    try {
+      await bot.sendMessage(msg.chat.id, "جاري تجهيز ملف Excel...", keyboardForRole(role));
+      await exportLatestData(bot, msg.chat.id, role);
+    } catch (error) {
+      console.error(error);
+      await bot.sendMessage(
+        msg.chat.id,
+        "فشل تصدير البيانات. راجع سجلات السيرفر.",
+        keyboardForRole(role),
+      );
+    }
+  });
+
   bot.onText(/^\/sync$/, async (msg) => {
     const role = await getRole(msg);
     if (!(await requireImportAccess(bot, msg, role))) return;
@@ -372,7 +507,7 @@ function registerHandlers(bot, options = {}) {
       const chatId = msg.chat.id;
       const statusMessage = await bot.sendMessage(
         chatId,
-        "جاري تحدتث البينات البيانات من Google Sheet...",
+        "جاري تحديث البيانات من Google Sheet...",
         keyboardForRole(role),
       );
 
@@ -386,7 +521,7 @@ function registerHandlers(bot, options = {}) {
       console.error(error);
       await bot.sendMessage(
         msg.chat.id,
-        "فشلت التحدتث البينات. راجع سجلات السيرفر.",
+        "فشلت التحديث البيانات. راجع سجلات السيرفر.",
         keyboardForRole(role),
       );
     }
@@ -596,11 +731,18 @@ function registerHandlers(bot, options = {}) {
         return;
       }
 
-      if (/^(sync|تحدتث البينات)$/i.test(text)) {
+      if (/^(export|تصدير excel|تصدير Excel)$/i.test(text)) {
+        if (!(await requireImportAccess(bot, msg, role))) return;
+        await bot.sendMessage(chatId, "جاري تجهيز ملف Excel...", keyboardForRole(role));
+        await exportLatestData(bot, chatId, role);
+        return;
+      }
+
+      if (/^(sync|تحديث البيانات)$/i.test(text)) {
         if (!(await requireImportAccess(bot, msg, role))) return;
         const statusMessage = await bot.sendMessage(
           chatId,
-          "جاري تحدتث البينات البيانات من Google Sheet...",
+          "جاري تحديث البيانات البيانات من Google Sheet...",
           keyboardForRole(role),
         );
 
@@ -615,7 +757,7 @@ function registerHandlers(bot, options = {}) {
           await editStatus(
             bot,
             statusMessage,
-            "فشلت التحدتث البينات. راجع سجلات السيرفر.",
+            "فشلت التحديث البيانات. راجع سجلات السيرفر.",
             role,
           );
         }
@@ -639,3 +781,6 @@ function registerHandlers(bot, options = {}) {
 module.exports = {
   registerHandlers,
 };
+
+
+
