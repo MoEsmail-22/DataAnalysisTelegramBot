@@ -44,13 +44,15 @@ function canSearch(role) {
   return (
     role === "main_admin" ||
     role === "super_admin" ||
-    role === "admin" ||
+    role === "data-entry" ||
     role === "user"
   );
 }
 
 function canImport(role) {
-  return role === "main_admin" || role === "super_admin" || role === "admin";
+  return (
+    role === "main_admin" || role === "super_admin" || role === "data-entry"
+  );
 }
 
 function canManage(role) {
@@ -106,7 +108,7 @@ function roleSelectionKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: "مستخدم" }, { text: "أدمن" }, { text: "مدير" }],
+        [{ text: "مستخدم" }, { text: "مدخل بيانات" }, { text: "مدير" }],
         [{ text: "رجوع" }],
       ],
       resize_keyboard: true,
@@ -121,7 +123,7 @@ function reviewRequestKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: "مستخدم" }, { text: "أدمن" }, { text: "مدير" }],
+        [{ text: "مستخدم" }, { text: "مدخل بيانات" }, { text: "مدير" }],
         [{ text: "رفض" }, { text: "إلغاء" }],
       ],
       resize_keyboard: true,
@@ -158,7 +160,7 @@ async function requireSearchAccess(bot, msg, role) {
     [
       "غير مسموح لك باستخدام البحث في هذا البوت.",
       `رقم حسابك في تيليجرام: ${msg.from?.id}`,
-      "اطلب من الأدمن إضافتك من زر إدارة المستخدمين.",
+      "اطلب من المدير إضافتك من زر إدارة المستخدمين.",
     ].join("\n"),
     keyboardForRole(role),
   );
@@ -173,7 +175,7 @@ async function requireImportAccess(bot, msg, role) {
   await bot.sendMessage(
     msg.chat.id,
     [
-      "رفع ملف Excel متاح للأدمن فقط.",
+      "رفع ملف Excel متاح لمدخل بيانات والمدير فقط.",
       `رقم حسابك في تيليجرام: ${msg.from?.id}`,
     ].join("\n"),
     keyboardForRole(role),
@@ -232,8 +234,6 @@ async function sendStats(bot, chatId, role) {
 async function searchAndReply(bot, chatId, query, role) {
   const normalizedQuery = normalizePhone(query);
 
-  // If it's a phone number, search by phone.
-  // If it's NOT a phone, treat as a name — require at least 2 words, use first 2 only.
   let searchQuery = normalizedQuery;
 
   if (!searchQuery) {
@@ -280,11 +280,11 @@ async function showAccessManagement(bot, msg) {
       "إدارة المستخدمين:",
       "",
       "طلبات الصلاحية: مراجعة طلبات المستخدمين الجدد والموافقة عليهم.",
-      "إضافة: اختر الصلاحية (مستخدم/أدمن/مدير) ثم أرسل Telegram ID.",
+      "إضافة: اختر الصلاحية (مستخدم/مدخل بيانات/مدير) ثم أرسل Telegram ID.",
       "  • مستخدم: يستطيع البحث فقط.",
-      "  • أدمن: يستطيع البحث ورفع ملفات Excel.",
+      "  • مدخل بيانات: يستطيع البحث ورفع ملفات Excel.",
       "  • مدير: كل الصلاحيات + إدارة المستخدمين (مثل main admin لكن يمكن حذفه).",
-      "ترقيه: تغيير صلاحية مستخدم موجود (من مستخدم إلى أدمن أو مدير، أو العكس).",
+      "ترقيه: تغيير صلاحية مستخدم موجود (من مستخدم إلى مدخل بيانات أو مدير، أو العكس).",
       "حذف: تظهر قائمة بكل المستخدمين، ثم أرسل ID أو اسم للحذف.",
       "",
       "الـ main admins الموجودون في ADMIN_IDS لا يمكن حذفهم من هنا.",
@@ -315,21 +315,18 @@ async function resolveBotUser(input) {
   const text = String(input || "").trim();
   if (!text) return { status: "empty" };
 
-  // 1. Telegram ID
   if (isTelegramId(text)) {
     const user = await getBotAccessUser(text);
     if (user) return { status: "found", user };
     return { status: "not_found", source: "telegram_id" };
   }
 
-  // 2. Phone
   const normalizedPhone = normalizePhone(text);
   if (normalizedPhone) {
     const user = await findBotAccessUserByPhone(normalizedPhone);
     if (user) return { status: "found", user };
   }
 
-  // 3. Name
   const matches = await findBotAccessUsersByName(text);
   if (matches.length === 1) return { status: "found", user: matches[0] };
   if (matches.length > 1) return { status: "multiple", users: matches };
@@ -347,7 +344,6 @@ async function handleManagementState(bot, msg, text) {
     return true;
   }
 
-  // Step: admin entered the target for promotion
   if (state.step === "awaiting_promotion_target") {
     const resolved = await resolveBotUser(text);
 
@@ -368,7 +364,11 @@ async function handleManagementState(bot, msg, text) {
         targetName: user.display_name,
         currentRole: user.role,
       });
-      const roleLabels = { user: "مستخدم", admin: "أدمن", super_admin: "مدير" };
+      const roleLabels = {
+        user: "مستخدم",
+        "data-entry": "مدخل بيانات",
+        super_admin: "مدير",
+      };
       await bot.sendMessage(
         msg.chat.id,
         [
@@ -394,7 +394,7 @@ async function handleManagementState(bot, msg, text) {
         .map((u, i) => {
           const roleLabels = {
             user: "مستخدم",
-            admin: "أدمن",
+            "data-entry": "مدخل بيانات",
             super_admin: "مدير",
           };
           const name = u.display_name ? ` (${u.display_name})` : "";
@@ -423,7 +423,6 @@ async function handleManagementState(bot, msg, text) {
     return true;
   }
 
-  // Step: admin is selecting from multiple matches
   if (state.step === "selecting_promotion_target") {
     const match = text.match(/^\s*(\d+)\s*$/);
     if (match) {
@@ -447,7 +446,7 @@ async function handleManagementState(bot, msg, text) {
         });
         const roleLabels = {
           user: "مستخدم",
-          admin: "أدمن",
+          "data-entry": "مدخل بيانات",
           super_admin: "مدير",
         };
         await bot.sendMessage(
@@ -474,7 +473,6 @@ async function handleManagementState(bot, msg, text) {
     return true;
   }
 
-  // Step: admin is choosing the new role for promotion
   if (state.step === "choosing_new_role") {
     const { targetId, targetName, currentRole } = state;
     let newRole = null;
@@ -483,9 +481,9 @@ async function handleManagementState(bot, msg, text) {
     if (/^مستخدم$/i.test(text)) {
       newRole = "user";
       roleLabel = "مستخدم";
-    } else if (/^أدمن$/i.test(text)) {
-      newRole = "admin";
-      roleLabel = "أدمن";
+    } else if (/^مدخل بيانات$/i.test(text)) {
+      newRole = "data-entry";
+      roleLabel = "مدخل بيانات";
     } else if (/^مدير$/i.test(text)) {
       newRole = "super_admin";
       roleLabel = "مدير";
@@ -513,13 +511,12 @@ async function handleManagementState(bot, msg, text) {
 
     await bot.sendMessage(
       msg.chat.id,
-      "اختر مستخدم أو أدمن أو مدير، أو اكتب إلغاء.",
+      "اختر مستخدم أو مدخل بيانات أو مدير، أو اكتب إلغاء.",
       roleSelectionKeyboard(),
     );
     return true;
   }
 
-  // Step: admin is reviewing the list of pending access requests
   if (state.step === "reviewing_requests") {
     const match = text.match(/^\s*(\d+)\s*$/);
     if (match) {
@@ -539,7 +536,7 @@ async function handleManagementState(bot, msg, text) {
             `الهاتف: ${request.phone || "غير محدد"}`,
             `Telegram ID: ${request.telegram_id}`,
             "",
-            "اختر الصلاحية (مستخدم / أدمن / مدير):",
+            "اختر الصلاحية (مستخدم / مدخل بيانات / مدير):",
           ].join("\n"),
           reviewRequestKeyboard(),
         );
@@ -554,7 +551,6 @@ async function handleManagementState(bot, msg, text) {
     return true;
   }
 
-  // Step: admin is choosing role for a specific request
   if (state.step === "choosing_role_for_request") {
     const request = state.request;
 
@@ -589,10 +585,10 @@ async function handleManagementState(bot, msg, text) {
       return true;
     }
 
-    if (/^أدمن$/i.test(text)) {
+    if (/^مدخل بيانات$/i.test(text)) {
       const result = await approveAndGrantAccess(
         request.telegram_id,
-        "admin",
+        "data-entry",
         msg.from.id,
       );
       managementStates.delete(String(msg.from.id));
@@ -600,14 +596,14 @@ async function handleManagementState(bot, msg, text) {
         try {
           await bot.sendMessage(
             request.telegram_id,
-            "تمت الموافقة على طلبك كأدمن! يمكنك الآن استخدام البوت. أرسل /start للبدء.",
+            "تمت الموافقة على طلبك كمدخل بيانات! يمكنك الآن استخدام البوت. أرسل /start للبدء.",
           );
         } catch (e) {
           console.error("Could not notify user:", e.message);
         }
         await bot.sendMessage(
           msg.chat.id,
-          `تمت الموافقة على طلب ${result.display_name || request.telegram_id} ومنحه صلاحية admin.`,
+          `تمت الموافقة على طلب ${result.display_name || request.telegram_id} ومنحه صلاحية مدخل بيانات.`,
           managementKeyboard(),
         );
       } else {
@@ -661,7 +657,7 @@ async function handleManagementState(bot, msg, text) {
         try {
           await bot.sendMessage(
             request.telegram_id,
-            "تم رفض طلب الصلاحية. للاستفسار، تواصل مع الأدمن.",
+            "تم رفض طلب الصلاحية. للاستفسار، تواصل مع المدير.",
           );
         } catch (e) {
           console.error("Could not notify user:", e.message);
@@ -683,13 +679,12 @@ async function handleManagementState(bot, msg, text) {
 
     await bot.sendMessage(
       msg.chat.id,
-      "اختر مستخدم أو أدمن أو مدير، أو اكتب إلغاء.",
+      "اختر مستخدم أو مدخل بيانات أو مدير، أو اكتب إلغاء.",
       reviewRequestKeyboard(),
     );
     return true;
   }
 
-  // Step: admin is choosing the role for an add action
   if (state.step === "awaiting_role") {
     if (/^مستخدم$/i.test(text)) {
       managementStates.set(String(msg.from.id), { action: "add_user" });
@@ -700,11 +695,11 @@ async function handleManagementState(bot, msg, text) {
       );
       return true;
     }
-    if (/^أدمن$/i.test(text)) {
+    if (/^مدخل بيانات$/i.test(text)) {
       managementStates.set(String(msg.from.id), { action: "add_admin" });
       await bot.sendMessage(
         msg.chat.id,
-        "أرسل Telegram ID للأدمن:",
+        "أرسل Telegram ID لمدخل بيانات:",
         managementKeyboard(),
       );
       return true;
@@ -720,7 +715,7 @@ async function handleManagementState(bot, msg, text) {
     }
     await bot.sendMessage(
       msg.chat.id,
-      "اختر مستخدم أو أدمن أو مدير، أو اكتب إلغاء.",
+      "اختر مستخدم أو مدخل بيانات أو مدير، أو اكتب إلغاء.",
       roleSelectionKeyboard(),
     );
     return true;
@@ -744,8 +739,8 @@ async function handleManagementState(bot, msg, text) {
   }
 
   if (state.action === "add_admin") {
-    await upsertBotAccessUser(targetId, "admin", msg.from.id);
-    message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث ورفع ملفات Excel وتحديث البيانات.`;
+    await upsertBotAccessUser(targetId, "data-entry", msg.from.id);
+    message = `تمت إضافة مدخل بيانات ${targetId}. يستطيع البحث ورفع ملفات Excel وتحديث البيانات.`;
   }
 
   if (state.action === "add_super_admin") {
@@ -782,9 +777,7 @@ function valueAt(values, index) {
 async function exportLatestData(bot, chatId, role) {
   const profiles = await getAllCustomerProfiles();
   const rows = [
-    // Row 1: junk placeholder (exactly matches the upload template)
     ["1", "2", "3", "0", "5", "6", "7", "8", "9", "10", "11", ""],
-    // Row 2: Arabic headers (exactly matches the upload template)
     [
       "الهاتف 001",
       "اسم العميل",
@@ -799,15 +792,12 @@ async function exportLatestData(bot, chatId, role) {
       "العنوان 03",
       "ملحوظة",
     ],
-    // Row 3+: data rows
     ...profiles.map((profile) => {
       const phones = Array.isArray(profile.phones) ? profile.phones : [];
       const addresses = Array.isArray(profile.addresses)
         ? profile.addresses
         : [];
 
-      // phones[] now contains [duplicate, phone_2, phone_3] (NOT primary).
-      // For export, filter out duplicate_check_phone to get phone_2 and phone_3.
       const dupPhone = profile.duplicate_check_phone;
       const otherPhones = phones.filter((p) => p && p !== dupPhone);
 
@@ -872,14 +862,14 @@ function registerHandlers(bot, options = {}) {
       const existingRequest = await getAccessRequest(String(msg.from.id));
       let message;
       if (existingRequest?.status === "pending") {
-        message = "طلبك قيد المراجعة من الأدمن. سيتم إعلامك عند الموافقة.";
+        message = "طلبك قيد المراجعة من المدير. سيتم إعلامك عند الموافقة.";
       } else if (existingRequest?.status === "approved") {
         message = "تمت الموافقة على طلبك بالفعل. أرسل /start لتحديث القائمة.";
       } else {
         message = [
           "مرحباً! أنت غير مصرح لك باستخدام هذا البوت.",
           "",
-          "اضغط على زر «طلب صلاحية» لمشاركة جهة اتصالك وإرسال طلب للأدمن.",
+          "اضغط على زر «طلب صلاحية» لمشاركة جهة اتصالك وإرسال طلب للمدير.",
         ].join("\n");
       }
       await bot.sendMessage(msg.chat.id, message, unauthorizedKeyboard());
@@ -1072,7 +1062,7 @@ function registerHandlers(bot, options = {}) {
           `الاسم: ${displayName || "غير محدد"}`,
           `الهاتف: ${phone || "غير محدد"}`,
           "",
-          "سيتم مراجعة طلبك من الأدمن. سيصلك إشعار عند الموافقة.",
+          "سيتم مراجعة طلبك من المدير. سيصلك إشعار عند الموافقة.",
         ].join("\n"),
         unauthorizedKeyboard(),
       );
