@@ -105,8 +105,10 @@ function parseCustomerProfilesFromExcel(filePath) {
   return dataRows
     .map((row) => {
       const mapped = mapRow(headers, row);
+      // NOTE: primary_phone (الهاتف 001) is NOT in the phones array.
+      // It's used only as the record ID (upsert key), not for search.
+      // Search uses: duplicate_phone, phone_2, phone_3 (via phones[] + duplicate_check_phone column)
       const phones = unique([
-        normalizePhone(mapped.primary_phone),
         normalizePhone(mapped.duplicate_phone),
         normalizePhone(mapped.phone_2),
         normalizePhone(mapped.phone_3),
