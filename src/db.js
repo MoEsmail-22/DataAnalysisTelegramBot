@@ -15,10 +15,7 @@ function unique(values) {
 }
 
 function makeHash(profile) {
-  return crypto
-    .createHash("sha256")
-    .update(JSON.stringify(profile))
-    .digest("hex");
+  return crypto.createHash("sha256").update(JSON.stringify(profile)).digest("hex");
 }
 
 async function ensureAccessTable() {
@@ -32,12 +29,10 @@ async function ensureAccessTable() {
       updated_at timestamptz not null default now()
     )
   `);
-  // For tables created before display_name / super_admin existed
   await pool.query(`
     alter table bot_access_users
     add column if not exists display_name text
   `);
-  // Upgrade the role check constraint to allow super_admin
   await pool.query(`
     alter table bot_access_users
     drop constraint if exists bot_access_users_role_check
@@ -109,9 +104,7 @@ async function upsertCustomerProfiles(profiles) {
   );
 
   for (let index = 0; index < normalizedProfiles.length; index += chunkSize) {
-    await upsertCustomerProfilesChunk(
-      normalizedProfiles.slice(index, index + chunkSize),
-    );
+    await upsertCustomerProfilesChunk(normalizedProfiles.slice(index, index + chunkSize));
   }
 }
 
@@ -184,7 +177,6 @@ async function findCustomerProfile(query) {
       select *
       from customer_profiles
       where phones @> array[$1]::text[]
-        or primary_phone = $1
         or duplicate_check_phone = $1
         or customer_name ilike $2
       order by updated_at desc
@@ -244,12 +236,7 @@ async function getBotAccessUser(telegramId) {
   return result.rows[0] || null;
 }
 
-async function upsertBotAccessUser(
-  telegramId,
-  role,
-  addedBy,
-  displayName = null,
-) {
+async function upsertBotAccessUser(telegramId, role, addedBy, displayName = null) {
   await ensureAccessTable();
 
   const result = await pool.query(
@@ -300,6 +287,45 @@ async function listBotAccessUsers() {
   return result.rows;
 }
 
+// ─── Lookup helpers (for promotion feature) ───
+
+async function findBotAccessUsersByName(name) {
+  await ensureAccessTable();
+  const value = String(name || "").trim().replace(/\s+/g, " ");
+  if (!value) return [];
+
+  const result = await pool.query(
+    `
+      select telegram_id, role, display_name, added_by, created_at, updated_at
+      from bot_access_users
+      where lower(trim(coalesce(display_name, ''))) = lower($1)
+      order by role, telegram_id
+      limit 20
+    `,
+    [value],
+  );
+
+  return result.rows;
+}
+
+async function findBotAccessUserByPhone(phone) {
+  await ensureAccessTable();
+  await ensureAccessRequestsTable();
+
+  const result = await pool.query(
+    `
+      select ba.telegram_id, ba.role, ba.display_name, ba.added_by, ba.created_at, ba.updated_at
+      from bot_access_users ba
+      join access_requests ar on ba.telegram_id = ar.telegram_id
+      where ar.phone = $1
+      limit 1
+    `,
+    [String(phone)],
+  );
+
+  return result.rows[0] || null;
+}
+
 // ─── Access Requests (pending user onboarding) ───
 
 async function getAccessRequest(telegramId) {
@@ -315,16 +341,13 @@ async function upsertAccessRequest(telegramId, phone, displayName) {
   await ensureAccessRequestsTable();
   const existing = await getAccessRequest(telegramId);
 
-  // Already pending → don't overwrite (user re-tapped the button)
   if (existing && existing.status === "pending") {
     return { request: existing, isNew: false };
   }
-  // Already approved → they already have access, no need to re-request
   if (existing && existing.status === "approved") {
     return { request: existing, isNew: false };
   }
 
-  // Insert new, or revive a rejected request → pending
   const result = await pool.query(
     `
       insert into access_requests (telegram_id, phone, display_name, status, requested_at)
@@ -432,6 +455,8 @@ module.exports = {
   upsertBotAccessUser,
   removeBotAccessUser,
   listBotAccessUsers,
+  findBotAccessUsersByName,
+  findBotAccessUserByPhone,
   getAccessRequest,
   upsertAccessRequest,
   listPendingAccessRequests,
