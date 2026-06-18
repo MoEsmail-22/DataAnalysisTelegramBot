@@ -17,7 +17,10 @@ const {
   approveAndGrantAccess,
   rejectAccessRequest,
 } = require("./db");
-const { normalizePhone, parseCustomerProfilesFromExcel } = require("./excel");
+const {
+  normalizePhone,
+  parseCustomerProfilesFromExcel,
+} = require("./excel");
 const { adminIds } = require("./config");
 const { formatCustomerProfile, helpText, statsText } = require("./messages");
 
@@ -39,11 +42,11 @@ async function getRole(msg) {
 }
 
 function canSearch(role) {
-  return role === "main_admin" || role === "admin" || role === "user";
+  return role === "main_admin" || role === "super_admin" || role === "admin" || role === "user";
 }
 
 function canImport(role) {
-  return role === "main_admin" || role === "admin";
+  return role === "main_admin" || role === "super_admin" || role === "admin";
 }
 
 function canManage(role) {
@@ -59,16 +62,13 @@ function keyboardForRole(role) {
 
   if (canImport(role)) {
     rows.push([{ text: "رفع ملف Excel" }, { text: "إحصائيات" }]);
+    rows.push([{ text: "تحميل نسخة من البيانات" }]);
   }
 
   rows.push([{ text: "مساعدة" }, { text: "رقمي" }]);
 
   if (canManage(role)) {
     rows.push([{ text: "إدارة المستخدمين" }]);
-  }
-
-  if (canImport(role)) {
-    rows.push([{ text: "تحميل نسخة من البيانات" }]);
   }
 
   return {
@@ -131,7 +131,9 @@ function reviewRequestKeyboard() {
 function unauthorizedKeyboard() {
   return {
     reply_markup: {
-      keyboard: [[{ text: "طلب صلاحية", request_contact: true }]],
+      keyboard: [
+        [{ text: "طلب صلاحية", request_contact: true }],
+      ],
       resize_keyboard: true,
       is_persistent: true,
       one_time_keyboard: false,
@@ -201,9 +203,7 @@ async function editStatus(bot, message, text, role) {
   } catch (error) {
     console.error("Could not edit status message:", error.message);
 
-    if (
-      String(error.message).toLowerCase().includes("message is not modified")
-    ) {
+    if (String(error.message).toLowerCase().includes("message is not modified")) {
       return;
     }
 
@@ -426,10 +426,7 @@ async function handleManagementState(bot, msg, text) {
     }
 
     if (/^رفض$/i.test(text)) {
-      const result = await rejectAccessRequest(
-        request.telegram_id,
-        msg.from.id,
-      );
+      const result = await rejectAccessRequest(request.telegram_id, msg.from.id);
       managementStates.delete(String(msg.from.id));
       if (result) {
         try {
@@ -643,7 +640,8 @@ function registerHandlers(bot, options = {}) {
       const existingRequest = await getAccessRequest(String(msg.from.id));
       let message;
       if (existingRequest?.status === "pending") {
-        message = "طلبك قيد المراجعة من الأدمن. سيتم إعلامك عند الموافقة.";
+        message =
+          "طلبك قيد المراجعة من الأدمن. سيتم إعلامك عند الموافقة.";
       } else if (existingRequest?.status === "approved") {
         message = "تمت الموافقة على طلبك بالفعل. أرسل /start لتحديث القائمة.";
       } else {
@@ -1026,9 +1024,7 @@ function registerHandlers(bot, options = {}) {
         return;
       }
 
-      if (
-        /^(تحميل نسخة من البيانات|تحميل نسخه من البيانات|export)$/i.test(text)
-      ) {
+      if (/^(تحميل نسخة من البيانات|تحميل نسخه من البيانات|export)$/i.test(text)) {
         if (!(await requireImportAccess(bot, msg, role))) return;
         try {
           await bot.sendMessage(
