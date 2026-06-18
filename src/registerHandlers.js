@@ -228,8 +228,32 @@ async function sendStats(bot, chatId, role) {
 }
 
 async function searchAndReply(bot, chatId, query, role) {
-  const normalizedQuery = normalizePhone(query) || query;
-  const profile = await findCustomerProfile(normalizedQuery);
+  const normalizedQuery = normalizePhone(query);
+
+  // If it's a phone number, search by phone.
+  // If it's NOT a phone, treat as a name — require at least 2 words, use first 2 only.
+  let searchQuery = normalizedQuery;
+
+  if (!searchQuery) {
+    const nameWords = String(query || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter(Boolean);
+
+    if (nameWords.length < 2) {
+      await bot.sendMessage(
+        chatId,
+        "للبحث بالاسم اكتب أول اسمين على الأقل، مثال: محمد أحمد",
+        keyboardForRole(role),
+      );
+      return;
+    }
+
+    searchQuery = nameWords.slice(0, 2).join(" ");
+  }
+
+  const profile = await findCustomerProfile(searchQuery);
 
   if (!profile) {
     await bot.sendMessage(
@@ -745,7 +769,9 @@ function valueAt(values, index) {
 async function exportLatestData(bot, chatId, role) {
   const profiles = await getAllCustomerProfiles();
   const rows = [
+    // Row 1: junk placeholder (exactly matches the upload template)
     ["1", "2", "3", "0", "5", "6", "7", "8", "9", "10", "11", ""],
+    // Row 2: Arabic headers (exactly matches the upload template)
     [
       "الهاتف 001",
       "اسم العميل",
@@ -760,20 +786,24 @@ async function exportLatestData(bot, chatId, role) {
       "العنوان 03",
       "ملحوظة",
     ],
+    // Row 3+: data rows
     ...profiles.map((profile) => {
       const phones = Array.isArray(profile.phones) ? profile.phones : [];
       const addresses = Array.isArray(profile.addresses)
         ? profile.addresses
         : [];
 
+      // phones[] now contains [duplicate, phone_2, phone_3] (NOT primary).
+      // For export, filter out duplicate_check_phone to get phone_2 and phone_3.
+      const dupPhone = profile.duplicate_check_phone;
+      const otherPhones = phones.filter((p) => p && p !== dupPhone);
+
       return [
-        profile.primary_phone || valueAt(phones, 0),
+        profile.primary_phone || "",
         profile.customer_name || "",
-        profile.duplicate_check_phone ||
-          profile.primary_phone ||
-          valueAt(phones, 0),
-        valueAt(phones, 1),
-        valueAt(phones, 2),
+        profile.duplicate_check_phone || profile.primary_phone || "",
+        valueAt(otherPhones, 0),
+        valueAt(otherPhones, 1),
         profile.governorate || "",
         profile.zone || "",
         profile.area || "",
