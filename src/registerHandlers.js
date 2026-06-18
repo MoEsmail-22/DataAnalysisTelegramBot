@@ -59,13 +59,16 @@ function keyboardForRole(role) {
 
   if (canImport(role)) {
     rows.push([{ text: "رفع ملف Excel" }, { text: "إحصائيات" }]);
-    rows.push([{ text: "تحميل نسخة من البيانات" }]);
   }
 
   rows.push([{ text: "مساعدة" }, { text: "رقمي" }]);
 
   if (canManage(role)) {
     rows.push([{ text: "إدارة المستخدمين" }]);
+  }
+
+  if (canImport(role)) {
+    rows.push([{ text: "تحميل نسخة من البيانات" }]);
   }
 
   return {
