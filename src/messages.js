@@ -7,8 +7,6 @@ function formatList(title, values) {
 }
 
 function formatCustomerProfile(profile) {
-  // Show all available phones (الهاتف 0012, 002, 003) but deduplicate.
-  // If الهاتف 0012 happens to equal الهاتف 001 (primary), it still shows once.
   const allPhones = Array.isArray(profile.phones) ? profile.phones : [];
   const seen = new Set();
   const displayPhones = [];
