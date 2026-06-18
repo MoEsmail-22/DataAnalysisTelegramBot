@@ -7,11 +7,18 @@ function formatList(title, values) {
 }
 
 function formatCustomerProfile(profile) {
-  // Filter out primary_phone from the displayed phones array.
-  // primary_phone (الهاتف 001) is used only as the record ID, never shown to users.
-  const displayPhones = Array.isArray(profile.phones)
-    ? profile.phones.filter((p) => p && p !== profile.primary_phone)
-    : [];
+  // Show all available phones (الهاتف 0012, 002, 003) but deduplicate.
+  // If الهاتف 0012 happens to equal الهاتف 001 (primary), it still shows once.
+  const allPhones = Array.isArray(profile.phones) ? profile.phones : [];
+  const seen = new Set();
+  const displayPhones = [];
+  for (const p of allPhones) {
+    if (!p) continue;
+    const key = String(p).trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    displayPhones.push(p);
+  }
 
   const lines = [
     "بيانات العميل:",
