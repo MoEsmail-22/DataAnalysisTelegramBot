@@ -7,6 +7,12 @@ function formatList(title, values) {
 }
 
 function formatCustomerProfile(profile) {
+  // Filter out primary_phone from the displayed phones array.
+  // primary_phone (الهاتف 001) is used only as the record ID, never shown to users.
+  const displayPhones = Array.isArray(profile.phones)
+    ? profile.phones.filter((p) => p && p !== profile.primary_phone)
+    : [];
+
   const lines = [
     "بيانات العميل:",
     profile.customer_name ? `الاسم: ${profile.customer_name}` : null,
@@ -14,7 +20,7 @@ function formatCustomerProfile(profile) {
     profile.zone ? `الزون: ${profile.zone}` : null,
     profile.area ? `المنطقة: ${profile.area}` : null,
     "",
-    formatList("أرقام الهاتف:", profile.phones),
+    formatList("أرقام الهاتف:", displayPhones),
     "",
     formatList("العناوين:", profile.addresses),
     profile.notes ? "" : null,
@@ -30,6 +36,7 @@ function helpText() {
     "",
     "رقمي - إظهار رقم حسابك في تيليجرام",
     "رفع ملف Excel - تحديث بيانات العملاء من ملف Excel",
+    "تحميل نسخة من البيانات - تصدير كل البيانات كملف Excel",
     "بحث 010xxxxxxxx - البحث برقم الهاتف",
     "بحث اسم العميل - البحث باسم العميل",
     "إحصائيات - إحصائيات البيانات",
