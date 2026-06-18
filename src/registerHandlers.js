@@ -11,6 +11,8 @@ const {
   removeBotAccessUser,
   upsertBotAccessUser,
   upsertCustomerProfiles,
+  findBotAccessUsersByName,
+  findBotAccessUserByPhone,
   getAccessRequest,
   upsertAccessRequest,
   listPendingAccessRequests,
@@ -87,8 +89,8 @@ function managementKeyboard() {
     reply_markup: {
       keyboard: [
         [{ text: "طلبات الصلاحية" }, { text: "إضافة" }],
-        [{ text: "حذف" }, { text: "قائمة الصلاحيات" }],
-        [{ text: "رجوع" }],
+        [{ text: "ترقيه" }, { text: "حذف" }],
+        [{ text: "قائمة الصلاحيات" }, { text: "رجوع" }],
       ],
       resize_keyboard: true,
       is_persistent: true,
@@ -256,6 +258,7 @@ async function showAccessManagement(bot, msg) {
       "  • مستخدم: يستطيع البحث فقط.",
       "  • أدمن: يستطيع البحث ورفع ملفات Excel.",
       "  • مدير: كل الصلاحيات + إدارة المستخدمين (مثل main admin لكن يمكن حذفه).",
+      "ترقيه: تغيير صلاحية مستخدم موجود (من مستخدم إلى أدمن أو مدير، أو العكس).",
       "حذف: تظهر قائمة بكل المستخدمين، ثم أرسل ID أو اسم للحذف.",
       "",
       "الـ main admins الموجودون في ADMIN_IDS لا يمكن حذفهم من هنا.",
@@ -282,6 +285,31 @@ async function sendAccessList(bot, msg) {
   );
 }
 
+async function resolveBotUser(input) {
+  const text = String(input || "").trim();
+  if (!text) return { status: "empty" };
+
+  // 1. Telegram ID
+  if (isTelegramId(text)) {
+    const user = await getBotAccessUser(text);
+    if (user) return { status: "found", user };
+    return { status: "not_found", source: "telegram_id" };
+  }
+
+  // 2. Phone
+  const normalizedPhone = normalizePhone(text);
+  if (normalizedPhone) {
+    const user = await findBotAccessUserByPhone(normalizedPhone);
+    if (user) return { status: "found", user };
+  }
+
+  // 3. Name
+  const matches = await findBotAccessUsersByName(text);
+  if (matches.length === 1) return { status: "found", user: matches[0] };
+  if (matches.length > 1) return { status: "multiple", users: matches };
+  return { status: "not_found", source: "name" };
+}
+
 async function handleManagementState(bot, msg, text) {
   const state = managementStates.get(String(msg.from.id));
   if (!state) return false;
@@ -290,6 +318,170 @@ async function handleManagementState(bot, msg, text) {
     managementStates.delete(String(msg.from.id));
     const role = await getRole(msg);
     await bot.sendMessage(msg.chat.id, "تم الإلغاء.", keyboardForRole(role));
+    return true;
+  }
+
+  // Step: admin entered the target for promotion
+  if (state.step === "awaiting_promotion_target") {
+    const resolved = await resolveBotUser(text);
+
+    if (resolved.status === "found") {
+      const user = resolved.user;
+      if (isMainAdminId(user.telegram_id)) {
+        await bot.sendMessage(
+          msg.chat.id,
+          "لا يمكن تعديل صلاحية main admin لأنه موجود في ADMIN_IDS.",
+          managementKeyboard(),
+        );
+        managementStates.delete(String(msg.from.id));
+        return true;
+      }
+      managementStates.set(String(msg.from.id), {
+        step: "choosing_new_role",
+        targetId: user.telegram_id,
+        targetName: user.display_name,
+        currentRole: user.role,
+      });
+      const roleLabels = { user: "مستخدم", admin: "أدمن", super_admin: "مدير" };
+      await bot.sendMessage(
+        msg.chat.id,
+        [
+          "تغيير صلاحية:",
+          "",
+          `الاسم: ${user.display_name || "غير محدد"}`,
+          `Telegram ID: ${user.telegram_id}`,
+          `الصلاحية الحالية: ${roleLabels[user.role] || user.role}`,
+          "",
+          "اختر الصلاحية الجديدة:",
+        ].join("\n"),
+        roleSelectionKeyboard(),
+      );
+      return true;
+    }
+
+    if (resolved.status === "multiple") {
+      managementStates.set(String(msg.from.id), {
+        step: "selecting_promotion_target",
+        users: resolved.users,
+      });
+      const list = resolved.users
+        .map((u, i) => {
+          const roleLabels = { user: "مستخدم", admin: "أدمن", super_admin: "مدير" };
+          const name = u.display_name ? ` (${u.display_name})` : "";
+          return `${i + 1}. ${u.telegram_id}${name} — ${roleLabels[u.role] || u.role}`;
+        })
+        .join("\n");
+      await bot.sendMessage(
+        msg.chat.id,
+        [
+          "يوجد عدة مستخدمين بنفس الاسم. اختر الرقم:",
+          "",
+          list,
+          "",
+          "أرسل رقم الاختيار، أو اكتب إلغاء.",
+        ].join("\n"),
+        managementKeyboard(),
+      );
+      return true;
+    }
+
+    await bot.sendMessage(
+      msg.chat.id,
+      "لم يتم العثور على المستخدم. أرسل Telegram ID أو رقم هاتف أو اسم، أو اكتب إلغاء.",
+      managementKeyboard(),
+    );
+    return true;
+  }
+
+  // Step: admin is selecting from multiple matches
+  if (state.step === "selecting_promotion_target") {
+    const match = text.match(/^\s*(\d+)\s*$/);
+    if (match) {
+      const index = parseInt(match[1], 10) - 1;
+      if (index >= 0 && index < state.users.length) {
+        const user = state.users[index];
+        if (isMainAdminId(user.telegram_id)) {
+          await bot.sendMessage(
+            msg.chat.id,
+            "لا يمكن تعديل صلاحية main admin.",
+            managementKeyboard(),
+          );
+          managementStates.delete(String(msg.from.id));
+          return true;
+        }
+        managementStates.set(String(msg.from.id), {
+          step: "choosing_new_role",
+          targetId: user.telegram_id,
+          targetName: user.display_name,
+          currentRole: user.role,
+        });
+        const roleLabels = { user: "مستخدم", admin: "أدمن", super_admin: "مدير" };
+        await bot.sendMessage(
+          msg.chat.id,
+          [
+            "تغيير صلاحية:",
+            "",
+            `الاسم: ${user.display_name || "غير محدد"}`,
+            `Telegram ID: ${user.telegram_id}`,
+            `الصلاحية الحالية: ${roleLabels[user.role] || user.role}`,
+            "",
+            "اختر الصلاحية الجديدة:",
+          ].join("\n"),
+          roleSelectionKeyboard(),
+        );
+        return true;
+      }
+    }
+    await bot.sendMessage(
+      msg.chat.id,
+      "رقم غير صحيح. أرسل رقم صحيح، أو اكتب إلغاء.",
+      managementKeyboard(),
+    );
+    return true;
+  }
+
+  // Step: admin is choosing the new role for promotion
+  if (state.step === "choosing_new_role") {
+    const { targetId, targetName, currentRole } = state;
+    let newRole = null;
+    let roleLabel = "";
+
+    if (/^مستخدم$/i.test(text)) {
+      newRole = "user";
+      roleLabel = "مستخدم";
+    } else if (/^أدمن$/i.test(text)) {
+      newRole = "admin";
+      roleLabel = "أدمن";
+    } else if (/^مدير$/i.test(text)) {
+      newRole = "super_admin";
+      roleLabel = "مدير";
+    }
+
+    if (newRole) {
+      if (newRole === currentRole) {
+        await bot.sendMessage(
+          msg.chat.id,
+          `المستخدم لديه بالفعل صلاحية ${roleLabel}. اختر صلاحية أخرى أو اكتب إلغاء.`,
+          roleSelectionKeyboard(),
+        );
+        return true;
+      }
+      await upsertBotAccessUser(targetId, newRole, msg.from.id, null);
+      managementStates.delete(String(msg.from.id));
+      const nameSuffix = targetName ? ` (${targetName})` : "";
+      await bot.sendMessage(
+        msg.chat.id,
+        `تم تغيير صلاحية ${targetId}${nameSuffix} إلى ${roleLabel}.`,
+        managementKeyboard(),
+      );
+      return true;
+    }
+
+    await bot.sendMessage(
+      msg.chat.id,
+      "اختر مستخدم أو أدمن أو مدير، أو اكتب إلغاء.",
+      roleSelectionKeyboard(),
+    );
     return true;
   }
 
@@ -553,9 +745,7 @@ function valueAt(values, index) {
 async function exportLatestData(bot, chatId, role) {
   const profiles = await getAllCustomerProfiles();
   const rows = [
-    // Row 1: junk placeholder (exactly matches the upload template)
     ["1", "2", "3", "0", "5", "6", "7", "8", "9", "10", "11", ""],
-    // Row 2: Arabic headers (exactly matches the upload template)
     [
       "الهاتف 001",
       "اسم العميل",
@@ -570,7 +760,6 @@ async function exportLatestData(bot, chatId, role) {
       "العنوان 03",
       "ملحوظة",
     ],
-    // Row 3+: data rows
     ...profiles.map((profile) => {
       const phones = Array.isArray(profile.phones) ? profile.phones : [];
       const addresses = Array.isArray(profile.addresses)
@@ -810,7 +999,6 @@ function registerHandlers(bot, options = {}) {
     const contact = msg.contact;
     if (!contact) return;
 
-    // request_contact always sends the tapper's own contact — verify just in case
     if (String(contact.user_id) !== String(msg.from.id)) {
       await bot.sendMessage(
         msg.chat.id,
@@ -847,7 +1035,6 @@ function registerHandlers(bot, options = {}) {
         unauthorizedKeyboard(),
       );
 
-      // Notify all main admins about the new request
       for (const adminId of adminIds) {
         try {
           await bot.sendMessage(
@@ -961,6 +1148,21 @@ function registerHandlers(bot, options = {}) {
           msg.chat.id,
           "اختر الصلاحية:",
           roleSelectionKeyboard(),
+        );
+        return;
+      }
+
+      if (/^ترقيه$/i.test(text)) {
+        if (!(await requireManagementAccess(bot, msg, role))) return;
+        managementStates.set(String(msg.from.id), { step: "awaiting_promotion_target" });
+        await bot.sendMessage(
+          msg.chat.id,
+          [
+            "أرسل Telegram ID أو رقم هاتف أو اسم المستخدم الذي تريد تغيير صلاحيته:",
+            "",
+            "أو اكتب إلغاء للرجوع.",
+          ].join("\n"),
+          managementKeyboard(),
         );
         return;
       }
