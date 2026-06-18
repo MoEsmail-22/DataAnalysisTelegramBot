@@ -22,7 +22,7 @@ async function ensureAccessTable() {
   await pool.query(`
     create table if not exists bot_access_users (
       telegram_id text primary key,
-      role text not null check (role in ('user', 'admin', 'super_admin')),
+      role text not null check (role in ('user', 'data-entry', 'super_admin')),
       display_name text,
       added_by text,
       created_at timestamptz not null default now(),
@@ -40,7 +40,7 @@ async function ensureAccessTable() {
   await pool.query(`
     alter table bot_access_users
     add constraint bot_access_users_role_check
-    check (role in ('user', 'admin', 'super_admin'))
+    check (role in ('user', 'data-entry', 'super_admin'))
   `);
 }
 
@@ -51,7 +51,7 @@ async function ensureAccessRequestsTable() {
       phone text,
       display_name text,
       status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
-      granted_role text check (granted_role is null or granted_role in ('user', 'admin', 'super_admin')),
+      granted_role text check (granted_role is null or granted_role in ('user', 'data-entry', 'super_admin')),
       requested_at timestamptz not null default now(),
       reviewed_by text,
       reviewed_at timestamptz
@@ -287,8 +287,6 @@ async function listBotAccessUsers() {
   return result.rows;
 }
 
-// ─── Lookup helpers (for promotion feature) ───
-
 async function findBotAccessUsersByName(name) {
   await ensureAccessTable();
   const value = String(name || "").trim().replace(/\s+/g, " ");
@@ -325,8 +323,6 @@ async function findBotAccessUserByPhone(phone) {
 
   return result.rows[0] || null;
 }
-
-// ─── Access Requests (pending user onboarding) ───
 
 async function getAccessRequest(telegramId) {
   await ensureAccessRequestsTable();
