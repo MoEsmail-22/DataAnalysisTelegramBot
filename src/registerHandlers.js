@@ -47,7 +47,7 @@ function canImport(role) {
 }
 
 function canManage(role) {
-  return role === "main_admin";
+  return role === "main_admin" || role === "super_admin";
 }
 
 function keyboardForRole(role) {
@@ -59,16 +59,13 @@ function keyboardForRole(role) {
 
   if (canImport(role)) {
     rows.push([{ text: "رفع ملف Excel" }, { text: "إحصائيات" }]);
+    rows.push([{ text: "تحميل نسخة من البيانات" }]);
   }
 
   rows.push([{ text: "مساعدة" }, { text: "رقمي" }]);
 
   if (canManage(role)) {
     rows.push([{ text: "إدارة المستخدمين" }]);
-  }
-
-  if (canImport(role)) {
-    rows.push([{ text: "تحميل نسخة من البيانات" }]);
   }
 
   return {
@@ -101,7 +98,10 @@ function managementKeyboard() {
 function roleSelectionKeyboard() {
   return {
     reply_markup: {
-      keyboard: [[{ text: "مستخدم" }, { text: "أدمن" }], [{ text: "رجوع" }]],
+      keyboard: [
+        [{ text: "مستخدم" }, { text: "أدمن" }, { text: "مدير" }],
+        [{ text: "رجوع" }],
+      ],
       resize_keyboard: true,
       is_persistent: true,
       one_time_keyboard: false,
@@ -114,7 +114,7 @@ function reviewRequestKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: "مستخدم" }, { text: "أدمن" }],
+        [{ text: "مستخدم" }, { text: "أدمن" }, { text: "مدير" }],
         [{ text: "رفض" }, { text: "إلغاء" }],
       ],
       resize_keyboard: true,
@@ -181,7 +181,7 @@ async function requireManagementAccess(bot, msg, role) {
 
   await bot.sendMessage(
     msg.chat.id,
-    "إدارة المستخدمين متاحة للـ main admins الموجودين في ADMIN_IDS فقط.",
+    "إدارة المستخدمين متاحة للـ main admins و المديرين فقط.",
     keyboardForRole(role),
   );
   return false;
@@ -249,9 +249,10 @@ async function showAccessManagement(bot, msg) {
       "إدارة المستخدمين:",
       "",
       "طلبات الصلاحية: مراجعة طلبات المستخدمين الجدد والموافقة عليهم.",
-      "إضافة: اختر الصلاحية (مستخدم/أدمن) ثم أرسل Telegram ID.",
+      "إضافة: اختر الصلاحية (مستخدم/أدمن/مدير) ثم أرسل Telegram ID.",
       "  • مستخدم: يستطيع البحث فقط.",
       "  • أدمن: يستطيع البحث ورفع ملفات Excel.",
+      "  • مدير: كل الصلاحيات + إدارة المستخدمين (مثل main admin لكن يمكن حذفه).",
       "حذف: تظهر قائمة بكل المستخدمين، ثم أرسل ID أو اسم للحذف.",
       "",
       "الـ main admins الموجودون في ADMIN_IDS لا يمكن حذفهم من هنا.",
@@ -309,7 +310,7 @@ async function handleManagementState(bot, msg, text) {
             `الهاتف: ${request.phone || "غير محدد"}`,
             `Telegram ID: ${request.telegram_id}`,
             "",
-            "اختر الصلاحية:",
+            "اختر الصلاحية (مستخدم / أدمن / مدير):",
           ].join("\n"),
           reviewRequestKeyboard(),
         );
@@ -390,6 +391,37 @@ async function handleManagementState(bot, msg, text) {
       return true;
     }
 
+    if (/^مدير$/i.test(text)) {
+      const result = await approveAndGrantAccess(
+        request.telegram_id,
+        "super_admin",
+        msg.from.id,
+      );
+      managementStates.delete(String(msg.from.id));
+      if (result) {
+        try {
+          await bot.sendMessage(
+            request.telegram_id,
+            "تمت الموافقة على طلبك كمدير! لديك كل الصلاحيات. أرسل /start للبدء.",
+          );
+        } catch (e) {
+          console.error("Could not notify user:", e.message);
+        }
+        await bot.sendMessage(
+          msg.chat.id,
+          `تمت الموافقة على طلب ${result.display_name || request.telegram_id} ومنحه صلاحية super_admin (مدير).`,
+          managementKeyboard(),
+        );
+      } else {
+        await bot.sendMessage(
+          msg.chat.id,
+          "تعذّرت الموافقة على الطلب (ربما تمت مراجعته بالفعل).",
+          managementKeyboard(),
+        );
+      }
+      return true;
+    }
+
     if (/^رفض$/i.test(text)) {
       const result = await rejectAccessRequest(
         request.telegram_id,
@@ -422,7 +454,7 @@ async function handleManagementState(bot, msg, text) {
 
     await bot.sendMessage(
       msg.chat.id,
-      "اختر مستخدم أو أدمن أو رفض، أو اكتب إلغاء.",
+      "اختر مستخدم أو أدمن أو مدير، أو اكتب إلغاء.",
       reviewRequestKeyboard(),
     );
     return true;
@@ -448,9 +480,18 @@ async function handleManagementState(bot, msg, text) {
       );
       return true;
     }
+    if (/^مدير$/i.test(text)) {
+      managementStates.set(String(msg.from.id), { action: "add_super_admin" });
+      await bot.sendMessage(
+        msg.chat.id,
+        "أرسل Telegram ID للمدير:",
+        managementKeyboard(),
+      );
+      return true;
+    }
     await bot.sendMessage(
       msg.chat.id,
-      "اختر مستخدم أو أدمن، أو اكتب إلغاء.",
+      "اختر مستخدم أو أدمن أو مدير، أو اكتب إلغاء.",
       roleSelectionKeyboard(),
     );
     return true;
@@ -476,6 +517,11 @@ async function handleManagementState(bot, msg, text) {
   if (state.action === "add_admin") {
     await upsertBotAccessUser(targetId, "admin", msg.from.id);
     message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث ورفع ملفات Excel وتحديث البيانات.`;
+  }
+
+  if (state.action === "add_super_admin") {
+    await upsertBotAccessUser(targetId, "super_admin", msg.from.id);
+    message = `تمت إضافة المدير ${targetId}. لديه كل الصلاحيات بما فيها إدارة المستخدمين.`;
   }
 
   if (state.action === "remove") {

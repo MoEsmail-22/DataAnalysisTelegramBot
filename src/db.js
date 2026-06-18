@@ -25,17 +25,27 @@ async function ensureAccessTable() {
   await pool.query(`
     create table if not exists bot_access_users (
       telegram_id text primary key,
-      role text not null check (role in ('user', 'admin')),
+      role text not null check (role in ('user', 'admin', 'super_admin')),
       display_name text,
       added_by text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     )
   `);
-  // For tables created before display_name existed
+  // For tables created before display_name / super_admin existed
   await pool.query(`
     alter table bot_access_users
     add column if not exists display_name text
+  `);
+  // Upgrade the role check constraint to allow super_admin
+  await pool.query(`
+    alter table bot_access_users
+    drop constraint if exists bot_access_users_role_check
+  `);
+  await pool.query(`
+    alter table bot_access_users
+    add constraint bot_access_users_role_check
+    check (role in ('user', 'admin', 'super_admin'))
   `);
 }
 
@@ -46,7 +56,7 @@ async function ensureAccessRequestsTable() {
       phone text,
       display_name text,
       status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
-      granted_role text check (granted_role is null or granted_role in ('user', 'admin')),
+      granted_role text check (granted_role is null or granted_role in ('user', 'admin', 'super_admin')),
       requested_at timestamptz not null default now(),
       reviewed_by text,
       reviewed_at timestamptz
