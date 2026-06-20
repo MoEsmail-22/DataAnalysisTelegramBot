@@ -980,16 +980,12 @@ function registerHandlers(bot, options = {}) {
       // Delete customers that are no longer in the new Excel file
       // This gives the "replace" behavior: new file completely replaces old data
       const sourceHashes = profiles.map((p) => p.sourceHash);
-      const deletedCount = await deleteCustomerProfilesNotInHashes(sourceHashes);
-
-      const successMsg = deletedCount > 0
-        ? `تم حفظ ${profiles.length} عميل بنجاح. تم حذف ${deletedCount} عميل لم يعد موجوداً في الملف الجديد.`
-        : `تم حفظ ${profiles.length} عميل بنجاح.`;
+      await deleteCustomerProfilesNotInHashes(sourceHashes);
 
       await editStatus(
         bot,
         statusMessage,
-        successMsg,
+        `تم حفظ ${profiles.length} عميل بنجاح.`,
         role,
       );
     } catch (error) {
