@@ -11,6 +11,7 @@ const {
   removeBotAccessUser,
   upsertBotAccessUser,
   upsertCustomerProfiles,
+  deleteCustomerProfilesNotInHashes,
   findBotAccessUsersByName,
   findBotAccessUserByPhone,
   getAccessRequest,
@@ -19,7 +20,10 @@ const {
   approveAndGrantAccess,
   rejectAccessRequest,
 } = require("./db");
-const { normalizePhone, parseCustomerProfilesFromExcel } = require("./excel");
+const {
+  normalizePhone,
+  parseCustomerProfilesFromExcel,
+} = require("./excel");
 const { adminIds } = require("./config");
 const { formatCustomerProfile, helpText, statsText } = require("./messages");
 
@@ -41,18 +45,11 @@ async function getRole(msg) {
 }
 
 function canSearch(role) {
-  return (
-    role === "main_admin" ||
-    role === "super_admin" ||
-    role === "data-entry" ||
-    role === "user"
-  );
+  return role === "main_admin" || role === "super_admin" || role === "data-entry" || role === "user";
 }
 
 function canImport(role) {
-  return (
-    role === "main_admin" || role === "super_admin" || role === "data-entry"
-  );
+  return role === "main_admin" || role === "super_admin" || role === "data-entry";
 }
 
 function canManage(role) {
@@ -137,7 +134,9 @@ function reviewRequestKeyboard() {
 function unauthorizedKeyboard() {
   return {
     reply_markup: {
-      keyboard: [[{ text: "طلب صلاحية", request_contact: true }]],
+      keyboard: [
+        [{ text: "طلب صلاحية", request_contact: true }],
+      ],
       resize_keyboard: true,
       is_persistent: true,
       one_time_keyboard: false,
@@ -207,9 +206,7 @@ async function editStatus(bot, message, text, role) {
   } catch (error) {
     console.error("Could not edit status message:", error.message);
 
-    if (
-      String(error.message).toLowerCase().includes("message is not modified")
-    ) {
+    if (String(error.message).toLowerCase().includes("message is not modified")) {
       return;
     }
 
@@ -364,11 +361,7 @@ async function handleManagementState(bot, msg, text) {
         targetName: user.display_name,
         currentRole: user.role,
       });
-      const roleLabels = {
-        user: "مستخدم",
-        "data-entry": "مدخل بيانات",
-        super_admin: "مدير",
-      };
+      const roleLabels = { user: "مستخدم", "data-entry": "مدخل بيانات", super_admin: "مدير" };
       await bot.sendMessage(
         msg.chat.id,
         [
@@ -392,11 +385,7 @@ async function handleManagementState(bot, msg, text) {
       });
       const list = resolved.users
         .map((u, i) => {
-          const roleLabels = {
-            user: "مستخدم",
-            "data-entry": "مدخل بيانات",
-            super_admin: "مدير",
-          };
+          const roleLabels = { user: "مستخدم", "data-entry": "مدخل بيانات", super_admin: "مدير" };
           const name = u.display_name ? ` (${u.display_name})` : "";
           return `${i + 1}. ${u.telegram_id}${name} — ${roleLabels[u.role] || u.role}`;
         })
@@ -444,11 +433,7 @@ async function handleManagementState(bot, msg, text) {
           targetName: user.display_name,
           currentRole: user.role,
         });
-        const roleLabels = {
-          user: "مستخدم",
-          "data-entry": "مدخل بيانات",
-          super_admin: "مدير",
-        };
+        const roleLabels = { user: "مستخدم", "data-entry": "مدخل بيانات", super_admin: "مدير" };
         await bot.sendMessage(
           msg.chat.id,
           [
@@ -648,10 +633,7 @@ async function handleManagementState(bot, msg, text) {
     }
 
     if (/^رفض$/i.test(text)) {
-      const result = await rejectAccessRequest(
-        request.telegram_id,
-        msg.from.id,
-      );
+      const result = await rejectAccessRequest(request.telegram_id, msg.from.id);
       managementStates.delete(String(msg.from.id));
       if (result) {
         try {
@@ -862,7 +844,8 @@ function registerHandlers(bot, options = {}) {
       const existingRequest = await getAccessRequest(String(msg.from.id));
       let message;
       if (existingRequest?.status === "pending") {
-        message = "طلبك قيد المراجعة من المدير. سيتم إعلامك عند الموافقة.";
+        message =
+          "طلبك قيد المراجعة من المدير. سيتم إعلامك عند الموافقة.";
       } else if (existingRequest?.status === "approved") {
         message = "تمت الموافقة على طلبك بالفعل. أرسل /start لتحديث القائمة.";
       } else {
@@ -994,10 +977,19 @@ function registerHandlers(bot, options = {}) {
 
       await upsertCustomerProfiles(profiles);
 
+      // Delete customers that are no longer in the new Excel file
+      // This gives the "replace" behavior: new file completely replaces old data
+      const sourceHashes = profiles.map((p) => p.sourceHash);
+      const deletedCount = await deleteCustomerProfilesNotInHashes(sourceHashes);
+
+      const successMsg = deletedCount > 0
+        ? `تم حفظ ${profiles.length} عميل بنجاح. تم حذف ${deletedCount} عميل لم يعد موجوداً في الملف الجديد.`
+        : `تم حفظ ${profiles.length} عميل بنجاح.`;
+
       await editStatus(
         bot,
         statusMessage,
-        `تم حفظ ${profiles.length} عميل بنجاح.`,
+        successMsg,
         role,
       );
     } catch (error) {
@@ -1186,9 +1178,7 @@ function registerHandlers(bot, options = {}) {
 
       if (/^ترقيه$/i.test(text)) {
         if (!(await requireManagementAccess(bot, msg, role))) return;
-        managementStates.set(String(msg.from.id), {
-          step: "awaiting_promotion_target",
-        });
+        managementStates.set(String(msg.from.id), { step: "awaiting_promotion_target" });
         await bot.sendMessage(
           msg.chat.id,
           [
@@ -1260,9 +1250,7 @@ function registerHandlers(bot, options = {}) {
         return;
       }
 
-      if (
-        /^(تحميل نسخة من البيانات|تحميل نسخه من البيانات|export)$/i.test(text)
-      ) {
+      if (/^(تحميل نسخة من البيانات|تحميل نسخه من البيانات|export)$/i.test(text)) {
         if (!(await requireImportAccess(bot, msg, role))) return;
         try {
           await bot.sendMessage(
