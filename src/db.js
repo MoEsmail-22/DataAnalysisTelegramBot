@@ -440,6 +440,24 @@ async function rejectAccessRequest(telegramId, reviewedBy) {
   return result.rows[0] || null;
 }
 
+// ─── Delete missing profiles (for Excel "replace" behavior) ───
+
+async function deleteCustomerProfilesNotInHashes(sourceHashes) {
+  if (!Array.isArray(sourceHashes) || sourceHashes.length === 0) {
+    return 0;
+  }
+
+  const result = await pool.query(
+    `
+      delete from customer_profiles
+      where not (source_hash = any($1::text[]))
+    `,
+    [sourceHashes],
+  );
+
+  return result.rowCount || 0;
+}
+
 module.exports = {
   pool,
   testConnection,
@@ -447,6 +465,7 @@ module.exports = {
   findCustomerProfile,
   countCustomerProfiles,
   getAllCustomerProfiles,
+  deleteCustomerProfilesNotInHashes,
   getBotAccessUser,
   upsertBotAccessUser,
   removeBotAccessUser,
