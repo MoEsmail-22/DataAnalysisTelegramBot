@@ -5,6 +5,7 @@ const XLSX = require("xlsx");
 const {
   countCustomerProfiles,
   findCustomerProfile,
+  findCustomerProfiles,
   getAllCustomerProfiles,
   getBotAccessUser,
   listBotAccessUsers,
@@ -20,10 +21,7 @@ const {
   approveAndGrantAccess,
   rejectAccessRequest,
 } = require("./db");
-const {
-  normalizePhone,
-  parseCustomerProfilesFromExcel,
-} = require("./excel");
+const { normalizePhone, parseCustomerProfilesFromExcel } = require("./excel");
 const { adminIds } = require("./config");
 const { formatCustomerProfile, helpText, statsText } = require("./messages");
 
@@ -45,11 +43,18 @@ async function getRole(msg) {
 }
 
 function canSearch(role) {
-  return role === "main_admin" || role === "super_admin" || role === "data-entry" || role === "user";
+  return (
+    role === "main_admin" ||
+    role === "super_admin" ||
+    role === "data-entry" ||
+    role === "user"
+  );
 }
 
 function canImport(role) {
-  return role === "main_admin" || role === "super_admin" || role === "data-entry";
+  return (
+    role === "main_admin" || role === "super_admin" || role === "data-entry"
+  );
 }
 
 function canManage(role) {
@@ -134,9 +139,7 @@ function reviewRequestKeyboard() {
 function unauthorizedKeyboard() {
   return {
     reply_markup: {
-      keyboard: [
-        [{ text: "طلب صلاحية", request_contact: true }],
-      ],
+      keyboard: [[{ text: "طلب صلاحية", request_contact: true }]],
       resize_keyboard: true,
       is_persistent: true,
       one_time_keyboard: false,
@@ -206,7 +209,9 @@ async function editStatus(bot, message, text, role) {
   } catch (error) {
     console.error("Could not edit status message:", error.message);
 
-    if (String(error.message).toLowerCase().includes("message is not modified")) {
+    if (
+      String(error.message).toLowerCase().includes("message is not modified")
+    ) {
       return;
     }
 
@@ -227,6 +232,48 @@ async function sendStats(bot, chatId, role) {
   const stats = await countCustomerProfiles();
   await bot.sendMessage(chatId, statsText(stats), keyboardForRole(role));
 }
+
+// async function searchAndReply(bot, chatId, query, role) {
+//   const normalizedQuery = normalizePhone(query);
+
+//   let searchQuery = normalizedQuery;
+
+//   if (!searchQuery) {
+//     const nameWords = String(query || "")
+//       .replace(/\s+/g, " ")
+//       .trim()
+//       .split(" ")
+//       .filter(Boolean);
+
+//     if (nameWords.length < 2) {
+//       await bot.sendMessage(
+//         chatId,
+//         "للبحث بالاسم اكتب أول اسمين على الأقل، مثال: محمد أحمد",
+//         keyboardForRole(role),
+//       );
+//       return;
+//     }
+
+//     searchQuery = nameWords.slice(0, 2).join(" ");
+//   }
+
+//   const profile = await findCustomerProfile(searchQuery);
+
+//   if (!profile) {
+//     await bot.sendMessage(
+//       chatId,
+//       "لا توجد بيانات لهذا الرقم أو الاسم.",
+//       keyboardForRole(role),
+//     );
+//     return;
+//   }
+
+//   await bot.sendMessage(
+//     chatId,
+//     formatCustomerProfile(profile),
+//     keyboardForRole(role),
+//   );
+// }
 
 async function searchAndReply(bot, chatId, query, role) {
   const normalizedQuery = normalizePhone(query);
@@ -252,9 +299,9 @@ async function searchAndReply(bot, chatId, query, role) {
     searchQuery = nameWords.slice(0, 2).join(" ");
   }
 
-  const profile = await findCustomerProfile(searchQuery);
+  const profiles = await findCustomerProfiles(searchQuery);
 
-  if (!profile) {
+  if (!profiles || profiles.length === 0) {
     await bot.sendMessage(
       chatId,
       "لا توجد بيانات لهذا الرقم أو الاسم.",
@@ -263,9 +310,50 @@ async function searchAndReply(bot, chatId, query, role) {
     return;
   }
 
+  if (profiles.length === 1) {
+    await bot.sendMessage(
+      chatId,
+      formatCustomerProfile(profiles[0]),
+      keyboardForRole(role),
+    );
+    return;
+  }
+
+  const names = [
+    ...new Set(profiles.map((p) => (p.customer_name || "").trim())),
+  ];
+
+  if (names.length === 1) {
+    await bot.sendMessage(
+      chatId,
+      formatCustomerProfile(profiles[0]),
+      keyboardForRole(role),
+    );
+    return;
+  }
+
+  const lines = profiles.map((p, i) => {
+    const name = p.customer_name || "بدون اسم";
+    const phones = Array.isArray(p.phones)
+      ? p.phones.filter(Boolean).join(" | ")
+      : "";
+    const area = [p.governorate, p.zone, p.area].filter(Boolean).join(" - ");
+    return [
+      `${i + 1}. ${name}`,
+      phones ? `الأرقام: ${phones}` : null,
+      area ? `المكان: ${area}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  });
+
   await bot.sendMessage(
     chatId,
-    formatCustomerProfile(profile),
+    [
+      `تم العثور على ${profiles.length} نتائج بأسماء مختلفة:`,
+      "",
+      lines.join("\n\n"),
+    ].join("\n"),
     keyboardForRole(role),
   );
 }
@@ -361,7 +449,11 @@ async function handleManagementState(bot, msg, text) {
         targetName: user.display_name,
         currentRole: user.role,
       });
-      const roleLabels = { user: "مستخدم", "data-entry": "مدخل بيانات", super_admin: "مدير" };
+      const roleLabels = {
+        user: "مستخدم",
+        "data-entry": "مدخل بيانات",
+        super_admin: "مدير",
+      };
       await bot.sendMessage(
         msg.chat.id,
         [
@@ -385,7 +477,11 @@ async function handleManagementState(bot, msg, text) {
       });
       const list = resolved.users
         .map((u, i) => {
-          const roleLabels = { user: "مستخدم", "data-entry": "مدخل بيانات", super_admin: "مدير" };
+          const roleLabels = {
+            user: "مستخدم",
+            "data-entry": "مدخل بيانات",
+            super_admin: "مدير",
+          };
           const name = u.display_name ? ` (${u.display_name})` : "";
           return `${i + 1}. ${u.telegram_id}${name} — ${roleLabels[u.role] || u.role}`;
         })
@@ -433,7 +529,11 @@ async function handleManagementState(bot, msg, text) {
           targetName: user.display_name,
           currentRole: user.role,
         });
-        const roleLabels = { user: "مستخدم", "data-entry": "مدخل بيانات", super_admin: "مدير" };
+        const roleLabels = {
+          user: "مستخدم",
+          "data-entry": "مدخل بيانات",
+          super_admin: "مدير",
+        };
         await bot.sendMessage(
           msg.chat.id,
           [
@@ -633,7 +733,10 @@ async function handleManagementState(bot, msg, text) {
     }
 
     if (/^رفض$/i.test(text)) {
-      const result = await rejectAccessRequest(request.telegram_id, msg.from.id);
+      const result = await rejectAccessRequest(
+        request.telegram_id,
+        msg.from.id,
+      );
       managementStates.delete(String(msg.from.id));
       if (result) {
         try {
@@ -844,8 +947,7 @@ function registerHandlers(bot, options = {}) {
       const existingRequest = await getAccessRequest(String(msg.from.id));
       let message;
       if (existingRequest?.status === "pending") {
-        message =
-          "طلبك قيد المراجعة من المدير. سيتم إعلامك عند الموافقة.";
+        message = "طلبك قيد المراجعة من المدير. سيتم إعلامك عند الموافقة.";
       } else if (existingRequest?.status === "approved") {
         message = "تمت الموافقة على طلبك بالفعل. أرسل /start لتحديث القائمة.";
       } else {
@@ -1174,7 +1276,9 @@ function registerHandlers(bot, options = {}) {
 
       if (/^ترقيه$/i.test(text)) {
         if (!(await requireManagementAccess(bot, msg, role))) return;
-        managementStates.set(String(msg.from.id), { step: "awaiting_promotion_target" });
+        managementStates.set(String(msg.from.id), {
+          step: "awaiting_promotion_target",
+        });
         await bot.sendMessage(
           msg.chat.id,
           [
@@ -1246,7 +1350,9 @@ function registerHandlers(bot, options = {}) {
         return;
       }
 
-      if (/^(تحميل نسخة من البيانات|تحميل نسخه من البيانات|export)$/i.test(text)) {
+      if (
+        /^(تحميل نسخة من البيانات|تحميل نسخه من البيانات|export)$/i.test(text)
+      ) {
         if (!(await requireImportAccess(bot, msg, role))) return;
         try {
           await bot.sendMessage(

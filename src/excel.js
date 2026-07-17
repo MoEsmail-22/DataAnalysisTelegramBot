@@ -32,7 +32,11 @@ function normalizeArabicDigits(value) {
 }
 
 function cleanText(value) {
-  return String(value || "").replace(/\s+/g, " ").trim() || null;
+  return (
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim() || null
+  );
 }
 
 function normalizePhone(value) {
@@ -60,7 +64,9 @@ function findHeaderRow(matrix) {
   const headerWords = ["اسم العميل", "الهاتف 001", "المحافظة", "العنوان"];
 
   const index = matrix.findIndex((row) =>
-    headerWords.some((word) => row.some((cell) => normalizeHeader(cell) === word)),
+    headerWords.some((word) =>
+      row.some((cell) => normalizeHeader(cell) === word),
+    ),
   );
 
   return index === -1 ? 0 : index;
@@ -71,7 +77,10 @@ function mapRow(headers, row) {
 
   for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
     const index = headers.findIndex((header) =>
-      aliases.some((alias) => normalizeHeader(alias).toLowerCase() === header.toLowerCase()),
+      aliases.some(
+        (alias) =>
+          normalizeHeader(alias).toLowerCase() === header.toLowerCase(),
+      ),
     );
 
     mapped[field] = index === -1 ? "" : row[index];
@@ -103,11 +112,8 @@ function parseCustomerProfilesFromExcel(filePath) {
   const dataRows = matrix.slice(headerRowIndex + 1);
 
   return dataRows
-    .map((row) => {
+    .map((row, rowIndex) => {
       const mapped = mapRow(headers, row);
-      // NOTE: primary_phone (الهاتف 001) is NOT in the phones array.
-      // It's used only as the record ID (upsert key), not for search.
-      // Search uses: duplicate_phone, phone_2, phone_3 (via phones[] + duplicate_check_phone column)
       const phones = unique([
         normalizePhone(mapped.duplicate_phone),
         normalizePhone(mapped.phone_2),
@@ -129,13 +135,21 @@ function parseCustomerProfilesFromExcel(filePath) {
         area: cleanText(mapped.area),
         addresses,
         notes: cleanText(mapped.notes),
-        rawData: Object.fromEntries(headers.map((header, index) => [header, row[index] || ""])),
+        rawData: Object.fromEntries(
+          headers.map((header, index) => [header, row[index] || ""]),
+        ),
       };
 
-      profile.sourceHash = makeHash(profile);
+      // INCLUDE rowIndex IN HASH SO DUPLICATES ARE SAVED SEPARATELY
+      profile.sourceHash = makeHash({ ...profile, _rowIndex: rowIndex });
       return profile;
     })
-    .filter((profile) => profile.customerName || profile.phones.length || profile.addresses.length);
+    .filter(
+      (profile) =>
+        profile.customerName ||
+        profile.phones.length ||
+        profile.addresses.length,
+    );
 }
 
 module.exports = {

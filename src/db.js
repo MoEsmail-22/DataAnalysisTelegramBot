@@ -15,7 +15,10 @@ function unique(values) {
 }
 
 function makeHash(profile) {
-  return crypto.createHash("sha256").update(JSON.stringify(profile)).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(profile))
+    .digest("hex");
 }
 
 async function ensureAccessTable() {
@@ -76,7 +79,7 @@ async function upsertCustomerProfiles(profiles) {
   let nullKeyCounter = 0;
 
   for (const profile of profiles) {
-    const key = profile.primaryPhone || `__NULL__${nullKeyCounter++}`;
+    const key = profile.sourceHash || `__NULL__${nullKeyCounter++}`;
     const existing = groupedProfiles.get(key);
 
     if (!existing) {
@@ -104,7 +107,9 @@ async function upsertCustomerProfiles(profiles) {
   );
 
   for (let index = 0; index < normalizedProfiles.length; index += chunkSize) {
-    await upsertCustomerProfilesChunk(normalizedProfiles.slice(index, index + chunkSize));
+    await upsertCustomerProfilesChunk(
+      normalizedProfiles.slice(index, index + chunkSize),
+    );
   }
 }
 
@@ -136,40 +141,29 @@ async function upsertCustomerProfilesChunk(profiles) {
   });
 
   const query = `
-    insert into customer_profiles (
-      source_hash,
-      customer_name,
-      primary_phone,
-      duplicate_check_phone,
-      phones,
-      governorate,
-      zone,
-      area,
-      addresses,
-      notes,
-      raw_data,
-      updated_at
-    )
-    values ${placeholders.join(",")}
-    on conflict (primary_phone)
-    do update set
-      source_hash = excluded.source_hash,
-      customer_name = excluded.customer_name,
-      duplicate_check_phone = excluded.duplicate_check_phone,
-      phones = excluded.phones,
-      governorate = excluded.governorate,
-      zone = excluded.zone,
-      area = excluded.area,
-      addresses = excluded.addresses,
-      notes = excluded.notes,
-      raw_data = excluded.raw_data,
-      updated_at = now();
-  `;
+  insert into customer_profiles (
+    source_hash,
+    customer_name,
+    primary_phone,
+    duplicate_check_phone,
+    phones,
+    governorate,
+    zone,
+    area,
+    addresses,
+    notes,
+    raw_data,
+    updated_at
+  )
+  values ${placeholders.join(",")}
+  on conflict (primary_phone)
+  do nothing;
+`;
 
   await pool.query(query, values);
 }
 
-async function findCustomerProfile(query) {
+async function findCustomerProfiles(query) {
   const value = query.trim();
 
   const result = await pool.query(
@@ -180,12 +174,17 @@ async function findCustomerProfile(query) {
         or duplicate_check_phone = $1
         or customer_name ilike $2
       order by updated_at desc
-      limit 1
+      limit 10
     `,
     [value, `%${value}%`],
   );
 
-  return result.rows[0] || null;
+  return result.rows;
+}
+
+async function findCustomerProfile(query) {
+  const rows = await findCustomerProfiles(query);
+  return rows[0] || null;
 }
 
 async function countCustomerProfiles() {
@@ -236,7 +235,12 @@ async function getBotAccessUser(telegramId) {
   return result.rows[0] || null;
 }
 
-async function upsertBotAccessUser(telegramId, role, addedBy, displayName = null) {
+async function upsertBotAccessUser(
+  telegramId,
+  role,
+  addedBy,
+  displayName = null,
+) {
   await ensureAccessTable();
 
   const result = await pool.query(
@@ -289,7 +293,9 @@ async function listBotAccessUsers() {
 
 async function findBotAccessUsersByName(name) {
   await ensureAccessTable();
-  const value = String(name || "").trim().replace(/\s+/g, " ");
+  const value = String(name || "")
+    .trim()
+    .replace(/\s+/g, " ");
   if (!value) return [];
 
   const result = await pool.query(
@@ -440,8 +446,6 @@ async function rejectAccessRequest(telegramId, reviewedBy) {
   return result.rows[0] || null;
 }
 
-// ─── Delete missing profiles (for Excel "replace" behavior) ───
-
 async function deleteCustomerProfilesNotInHashes(sourceHashes) {
   if (!Array.isArray(sourceHashes) || sourceHashes.length === 0) {
     return 0;
@@ -463,6 +467,7 @@ module.exports = {
   testConnection,
   upsertCustomerProfiles,
   findCustomerProfile,
+  findCustomerProfiles,
   countCustomerProfiles,
   getAllCustomerProfiles,
   deleteCustomerProfilesNotInHashes,
