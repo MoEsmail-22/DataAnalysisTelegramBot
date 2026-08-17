@@ -25,6 +25,7 @@ Create `.env` locally, or add these environment variables in your hosting dashbo
 BOT_TOKEN=your_new_bot_token
 DATABASE_URL=your_supabase_postgres_connection_string
 ADMIN_IDS=123456789,987654321
+TELEGRAM_WEBHOOK_SECRET=use_a_random_private_value_here
 
 # Optional tuning
 DB_UPSERT_CHUNK_SIZE=250
@@ -97,7 +98,11 @@ Your Excel file must have these columns (can be in any order, headers can be on 
 
 ## Deployment
 
-For hosting platforms, push the latest code to GitHub, then redeploy/restart the bot from the hosting dashboard. Make sure the hosting environment variables match the `.env` values above.
+### Vercel webhook deployment
+
+This bot can run on Vercel without polling. Add `BOT_TOKEN`, `DATABASE_URL`, `ADMIN_IDS`, and `TELEGRAM_WEBHOOK_SECRET` as Production environment variables. Deploy the project, then set `WEBHOOK_URL` locally to `https://your-domain.vercel.app/api/webhook` and run `npm run set-webhook`.
+
+Use `GET /api/health` to confirm that the Vercel deployment can reach the database. Do not run `npm start` at the same time as the Vercel webhook, otherwise Telegram will report a conflict.
 
 ## Troubleshooting
 
