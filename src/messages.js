@@ -7,6 +7,17 @@ function formatList(title, values) {
 }
 
 function formatCustomerProfile(profile) {
+  const allPhones = Array.isArray(profile.phones) ? profile.phones : [];
+  const seen = new Set();
+  const displayPhones = [];
+  for (const p of allPhones) {
+    if (!p) continue;
+    const key = String(p).trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    displayPhones.push(p);
+  }
+
   const lines = [
     "بيانات العميل:",
     profile.customer_name ? `الاسم: ${profile.customer_name}` : null,
@@ -14,7 +25,7 @@ function formatCustomerProfile(profile) {
     profile.zone ? `الزون: ${profile.zone}` : null,
     profile.area ? `المنطقة: ${profile.area}` : null,
     "",
-    formatList("أرقام الهاتف:", profile.phones),
+    formatList("أرقام الهاتف:", displayPhones),
     "",
     formatList("العناوين:", profile.addresses),
     profile.notes ? "" : null,
@@ -29,7 +40,8 @@ function helpText() {
     "اختار من القائمة أو اكتب أمر بالعربي:",
     "",
     "رقمي - إظهار رقم حسابك في تيليجرام",
-    "تحديث البيانات - تحديث البيانات من Google Sheet",
+    "رفع ملف Excel - تحديث بيانات العملاء من ملف Excel",
+    "تحميل نسخة من البيانات - تصدير كل البيانات كملف Excel",
     "بحث 010xxxxxxxx - البحث برقم الهاتف",
     "بحث اسم العميل - البحث باسم العميل",
     "إحصائيات - إحصائيات البيانات",

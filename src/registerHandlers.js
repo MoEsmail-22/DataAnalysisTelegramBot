@@ -4,17 +4,24 @@ const fs = require("fs").promises;
 const XLSX = require("xlsx");
 const {
   countCustomerProfiles,
-  deleteCustomerProfilesNotInHashes,
   findCustomerProfile,
+  findCustomerProfiles,
   getAllCustomerProfiles,
   getBotAccessUser,
   listBotAccessUsers,
   removeBotAccessUser,
   upsertBotAccessUser,
   upsertCustomerProfiles,
+  deleteCustomerProfilesNotInHashes,
+  findBotAccessUsersByName,
+  findBotAccessUserByPhone,
+  getAccessRequest,
+  upsertAccessRequest,
+  listPendingAccessRequests,
+  approveAndGrantAccess,
+  rejectAccessRequest,
 } = require("./db");
 const { normalizePhone, parseCustomerProfilesFromExcel } = require("./excel");
-const { syncGoogleSheet } = require("./googleSheets");
 const { adminIds } = require("./config");
 const { formatCustomerProfile, helpText, statsText } = require("./messages");
 
@@ -36,15 +43,22 @@ async function getRole(msg) {
 }
 
 function canSearch(role) {
-  return role === "main_admin" || role === "admin" || role === "user";
+  return (
+    role === "main_admin" ||
+    role === "super_admin" ||
+    role === "data-entry" ||
+    role === "user"
+  );
 }
 
 function canImport(role) {
-  return role === "main_admin" || role === "admin";
+  return (
+    role === "main_admin" || role === "super_admin" || role === "data-entry"
+  );
 }
 
 function canManage(role) {
-  return role === "main_admin";
+  return role === "main_admin" || role === "super_admin";
 }
 
 function keyboardForRole(role) {
@@ -55,8 +69,8 @@ function keyboardForRole(role) {
   }
 
   if (canImport(role)) {
-    rows.push([{ text: "تحديث البيانات" }, { text: "إحصائيات" }]);
-    rows.push([{ text: "تصدير Excel" }]);
+    rows.push([{ text: "رفع ملف Excel" }, { text: "إحصائيات" }]);
+    rows.push([{ text: "تحميل نسخة من البيانات" }]);
   }
 
   rows.push([{ text: "مساعدة" }, { text: "رقمي" }]);
@@ -80,8 +94,8 @@ function managementKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: "إضافة مستخدم" }, { text: "حذف مستخدم" }],
-        [{ text: "إضافة أدمن" }, { text: "حذف أدمن" }],
+        [{ text: "طلبات الصلاحية" }, { text: "إضافة" }],
+        [{ text: "ترقيه" }, { text: "حذف" }],
         [{ text: "قائمة الصلاحيات" }, { text: "رجوع" }],
       ],
       resize_keyboard: true,
@@ -92,14 +106,50 @@ function managementKeyboard() {
   };
 }
 
-function isTelegramId(value) {
-  const text = String(value || "").trim();
-  const normalizedPhone = normalizePhone(text);
-  if (normalizedPhone && /^01\d{9}$/.test(normalizedPhone)) {
-    return false;
-  }
+function roleSelectionKeyboard() {
+  return {
+    reply_markup: {
+      keyboard: [
+        [{ text: "مستخدم" }, { text: "مدخل بيانات" }, { text: "مدير" }],
+        [{ text: "رجوع" }],
+      ],
+      resize_keyboard: true,
+      is_persistent: true,
+      one_time_keyboard: false,
+      input_field_placeholder: "اختر الصلاحية",
+    },
+  };
+}
 
-  return /^[1-9]\d{4,19}$/.test(text);
+function reviewRequestKeyboard() {
+  return {
+    reply_markup: {
+      keyboard: [
+        [{ text: "مستخدم" }, { text: "مدخل بيانات" }, { text: "مدير" }],
+        [{ text: "رفض" }, { text: "إلغاء" }],
+      ],
+      resize_keyboard: true,
+      is_persistent: true,
+      one_time_keyboard: false,
+      input_field_placeholder: "اختر الصلاحية أو ارفض",
+    },
+  };
+}
+
+function unauthorizedKeyboard() {
+  return {
+    reply_markup: {
+      keyboard: [[{ text: "طلب صلاحية", request_contact: true }]],
+      resize_keyboard: true,
+      is_persistent: true,
+      one_time_keyboard: false,
+      input_field_placeholder: "اضغط على زر طلب صلاحية",
+    },
+  };
+}
+
+function isTelegramId(value) {
+  return /^\d{4,20}$/.test(String(value || "").trim());
 }
 
 async function requireSearchAccess(bot, msg, role) {
@@ -112,7 +162,7 @@ async function requireSearchAccess(bot, msg, role) {
     [
       "غير مسموح لك باستخدام البحث في هذا البوت.",
       `رقم حسابك في تيليجرام: ${msg.from?.id}`,
-      "اطلب من الأدمن إضافتك من زر إدارة المستخدمين.",
+      "اطلب من المدير إضافتك من زر إدارة المستخدمين.",
     ].join("\n"),
     keyboardForRole(role),
   );
@@ -127,7 +177,7 @@ async function requireImportAccess(bot, msg, role) {
   await bot.sendMessage(
     msg.chat.id,
     [
-      "رفع ملف Excel متاح للأدمن فقط.",
+      "رفع ملف Excel متاح لمدخل بيانات والمدير فقط.",
       `رقم حسابك في تيليجرام: ${msg.from?.id}`,
     ].join("\n"),
     keyboardForRole(role),
@@ -142,7 +192,7 @@ async function requireManagementAccess(bot, msg, role) {
 
   await bot.sendMessage(
     msg.chat.id,
-    "إدارة المستخدمين متاحة للـ main admins الموجودين في ADMIN_IDS فقط.",
+    "إدارة المستخدمين متاحة للـ main admins و المديرين فقط.",
     keyboardForRole(role),
   );
   return false;
@@ -183,6 +233,628 @@ async function sendStats(bot, chatId, role) {
   await bot.sendMessage(chatId, statsText(stats), keyboardForRole(role));
 }
 
+// async function searchAndReply(bot, chatId, query, role) {
+//   const normalizedQuery = normalizePhone(query);
+
+//   let searchQuery = normalizedQuery;
+
+//   if (!searchQuery) {
+//     const nameWords = String(query || "")
+//       .replace(/\s+/g, " ")
+//       .trim()
+//       .split(" ")
+//       .filter(Boolean);
+
+//     if (nameWords.length < 2) {
+//       await bot.sendMessage(
+//         chatId,
+//         "للبحث بالاسم اكتب أول اسمين على الأقل، مثال: محمد أحمد",
+//         keyboardForRole(role),
+//       );
+//       return;
+//     }
+
+//     searchQuery = nameWords.slice(0, 2).join(" ");
+//   }
+
+//   const profile = await findCustomerProfile(searchQuery);
+
+//   if (!profile) {
+//     await bot.sendMessage(
+//       chatId,
+//       "لا توجد بيانات لهذا الرقم أو الاسم.",
+//       keyboardForRole(role),
+//     );
+//     return;
+//   }
+
+//   await bot.sendMessage(
+//     chatId,
+//     formatCustomerProfile(profile),
+//     keyboardForRole(role),
+//   );
+// }
+
+async function searchAndReply(bot, chatId, query, role) {
+  const normalizedQuery = normalizePhone(query);
+
+  let searchQuery = normalizedQuery;
+
+  if (!searchQuery) {
+    const nameWords = String(query || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter(Boolean);
+
+    if (nameWords.length < 2) {
+      await bot.sendMessage(
+        chatId,
+        "للبحث بالاسم اكتب أول اسمين على الأقل، مثال: محمد أحمد",
+        keyboardForRole(role),
+      );
+      return;
+    }
+
+    searchQuery = nameWords.slice(0, 2).join(" ");
+  }
+
+  const profiles = await findCustomerProfiles(searchQuery);
+
+  if (!profiles || profiles.length === 0) {
+    await bot.sendMessage(
+      chatId,
+      "لا توجد بيانات لهذا الرقم أو الاسم.",
+      keyboardForRole(role),
+    );
+    return;
+  }
+
+  if (profiles.length === 1) {
+    await bot.sendMessage(
+      chatId,
+      formatCustomerProfile(profiles[0]),
+      keyboardForRole(role),
+    );
+    return;
+  }
+
+  const names = [
+    ...new Set(profiles.map((p) => (p.customer_name || "").trim())),
+  ];
+
+  if (names.length === 1) {
+    await bot.sendMessage(
+      chatId,
+      formatCustomerProfile(profiles[0]),
+      keyboardForRole(role),
+    );
+    return;
+  }
+
+  const lines = profiles.map((p, i) => {
+    const name = p.customer_name || "بدون اسم";
+    const phones = Array.isArray(p.phones)
+      ? p.phones.filter(Boolean).join(" | ")
+      : "";
+    const area = [p.governorate, p.zone, p.area].filter(Boolean).join(" - ");
+    return [
+      `${i + 1}. ${name}`,
+      phones ? `الأرقام: ${phones}` : null,
+      area ? `المكان: ${area}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  });
+
+  await bot.sendMessage(
+    chatId,
+    [
+      `تم العثور على ${profiles.length} نتائج بأسماء مختلفة:`,
+      "",
+      lines.join("\n\n"),
+    ].join("\n"),
+    keyboardForRole(role),
+  );
+}
+
+async function showAccessManagement(bot, msg) {
+  await bot.sendMessage(
+    msg.chat.id,
+    [
+      "إدارة المستخدمين:",
+      "",
+      "طلبات الصلاحية: مراجعة طلبات المستخدمين الجدد والموافقة عليهم.",
+      "إضافة: اختر الصلاحية (مستخدم/مدخل بيانات/مدير) ثم أرسل Telegram ID.",
+      "  • مستخدم: يستطيع البحث فقط.",
+      "  • مدخل بيانات: يستطيع البحث ورفع ملفات Excel.",
+      "  • مدير: كل الصلاحيات + إدارة المستخدمين (مثل main admin لكن يمكن حذفه).",
+      "ترقيه: تغيير صلاحية مستخدم موجود (من مستخدم إلى مدخل بيانات أو مدير، أو العكس).",
+      "حذف: تظهر قائمة بكل المستخدمين، ثم أرسل ID أو اسم للحذف.",
+      "",
+      "الـ main admins الموجودون في ADMIN_IDS لا يمكن حذفهم من هنا.",
+    ].join("\n"),
+    managementKeyboard(),
+  );
+}
+
+async function sendAccessList(bot, msg) {
+  const users = await listBotAccessUsers();
+  const mainAdmins = [...adminIds].map((id) => `main_admin: ${id}`);
+  const dbUsers = users.map((user) => {
+    const name = user.display_name ? ` (${user.display_name})` : "";
+    return `${user.role}: ${user.telegram_id}${name}`;
+  });
+  const lines = [...mainAdmins, ...dbUsers];
+
+  await bot.sendMessage(
+    msg.chat.id,
+    lines.length
+      ? lines.join("\n")
+      : "لا توجد صلاحيات محفوظة في قاعدة البيانات.",
+    managementKeyboard(),
+  );
+}
+
+async function resolveBotUser(input) {
+  const text = String(input || "").trim();
+  if (!text) return { status: "empty" };
+
+  if (isTelegramId(text)) {
+    const user = await getBotAccessUser(text);
+    if (user) return { status: "found", user };
+    return { status: "not_found", source: "telegram_id" };
+  }
+
+  const normalizedPhone = normalizePhone(text);
+  if (normalizedPhone) {
+    const user = await findBotAccessUserByPhone(normalizedPhone);
+    if (user) return { status: "found", user };
+  }
+
+  const matches = await findBotAccessUsersByName(text);
+  if (matches.length === 1) return { status: "found", user: matches[0] };
+  if (matches.length > 1) return { status: "multiple", users: matches };
+  return { status: "not_found", source: "name" };
+}
+
+async function handleManagementState(bot, msg, text) {
+  const state = managementStates.get(String(msg.from.id));
+  if (!state) return false;
+
+  if (/^(رجوع|إلغاء|الغاء)$/i.test(text)) {
+    managementStates.delete(String(msg.from.id));
+    const role = await getRole(msg);
+    await bot.sendMessage(msg.chat.id, "تم الإلغاء.", keyboardForRole(role));
+    return true;
+  }
+
+  if (state.step === "awaiting_promotion_target") {
+    const resolved = await resolveBotUser(text);
+
+    if (resolved.status === "found") {
+      const user = resolved.user;
+      if (isMainAdminId(user.telegram_id)) {
+        await bot.sendMessage(
+          msg.chat.id,
+          "لا يمكن تعديل صلاحية main admin لأنه موجود في ADMIN_IDS.",
+          managementKeyboard(),
+        );
+        managementStates.delete(String(msg.from.id));
+        return true;
+      }
+      managementStates.set(String(msg.from.id), {
+        step: "choosing_new_role",
+        targetId: user.telegram_id,
+        targetName: user.display_name,
+        currentRole: user.role,
+      });
+      const roleLabels = {
+        user: "مستخدم",
+        "data-entry": "مدخل بيانات",
+        super_admin: "مدير",
+      };
+      await bot.sendMessage(
+        msg.chat.id,
+        [
+          "تغيير صلاحية:",
+          "",
+          `الاسم: ${user.display_name || "غير محدد"}`,
+          `Telegram ID: ${user.telegram_id}`,
+          `الصلاحية الحالية: ${roleLabels[user.role] || user.role}`,
+          "",
+          "اختر الصلاحية الجديدة:",
+        ].join("\n"),
+        roleSelectionKeyboard(),
+      );
+      return true;
+    }
+
+    if (resolved.status === "multiple") {
+      managementStates.set(String(msg.from.id), {
+        step: "selecting_promotion_target",
+        users: resolved.users,
+      });
+      const list = resolved.users
+        .map((u, i) => {
+          const roleLabels = {
+            user: "مستخدم",
+            "data-entry": "مدخل بيانات",
+            super_admin: "مدير",
+          };
+          const name = u.display_name ? ` (${u.display_name})` : "";
+          return `${i + 1}. ${u.telegram_id}${name} — ${roleLabels[u.role] || u.role}`;
+        })
+        .join("\n");
+      await bot.sendMessage(
+        msg.chat.id,
+        [
+          "يوجد عدة مستخدمين بنفس الاسم. اختر الرقم:",
+          "",
+          list,
+          "",
+          "أرسل رقم الاختيار، أو اكتب إلغاء.",
+        ].join("\n"),
+        managementKeyboard(),
+      );
+      return true;
+    }
+
+    await bot.sendMessage(
+      msg.chat.id,
+      "لم يتم العثور على المستخدم. أرسل Telegram ID أو رقم هاتف أو اسم، أو اكتب إلغاء.",
+      managementKeyboard(),
+    );
+    return true;
+  }
+
+  if (state.step === "selecting_promotion_target") {
+    const match = text.match(/^\s*(\d+)\s*$/);
+    if (match) {
+      const index = parseInt(match[1], 10) - 1;
+      if (index >= 0 && index < state.users.length) {
+        const user = state.users[index];
+        if (isMainAdminId(user.telegram_id)) {
+          await bot.sendMessage(
+            msg.chat.id,
+            "لا يمكن تعديل صلاحية main admin.",
+            managementKeyboard(),
+          );
+          managementStates.delete(String(msg.from.id));
+          return true;
+        }
+        managementStates.set(String(msg.from.id), {
+          step: "choosing_new_role",
+          targetId: user.telegram_id,
+          targetName: user.display_name,
+          currentRole: user.role,
+        });
+        const roleLabels = {
+          user: "مستخدم",
+          "data-entry": "مدخل بيانات",
+          super_admin: "مدير",
+        };
+        await bot.sendMessage(
+          msg.chat.id,
+          [
+            "تغيير صلاحية:",
+            "",
+            `الاسم: ${user.display_name || "غير محدد"}`,
+            `Telegram ID: ${user.telegram_id}`,
+            `الصلاحية الحالية: ${roleLabels[user.role] || user.role}`,
+            "",
+            "اختر الصلاحية الجديدة:",
+          ].join("\n"),
+          roleSelectionKeyboard(),
+        );
+        return true;
+      }
+    }
+    await bot.sendMessage(
+      msg.chat.id,
+      "رقم غير صحيح. أرسل رقم صحيح، أو اكتب إلغاء.",
+      managementKeyboard(),
+    );
+    return true;
+  }
+
+  if (state.step === "choosing_new_role") {
+    const { targetId, targetName, currentRole } = state;
+    let newRole = null;
+    let roleLabel = "";
+
+    if (/^مستخدم$/i.test(text)) {
+      newRole = "user";
+      roleLabel = "مستخدم";
+    } else if (/^مدخل بيانات$/i.test(text)) {
+      newRole = "data-entry";
+      roleLabel = "مدخل بيانات";
+    } else if (/^مدير$/i.test(text)) {
+      newRole = "super_admin";
+      roleLabel = "مدير";
+    }
+
+    if (newRole) {
+      if (newRole === currentRole) {
+        await bot.sendMessage(
+          msg.chat.id,
+          `المستخدم لديه بالفعل صلاحية ${roleLabel}. اختر صلاحية أخرى أو اكتب إلغاء.`,
+          roleSelectionKeyboard(),
+        );
+        return true;
+      }
+      await upsertBotAccessUser(targetId, newRole, msg.from.id, null);
+      managementStates.delete(String(msg.from.id));
+      const nameSuffix = targetName ? ` (${targetName})` : "";
+      await bot.sendMessage(
+        msg.chat.id,
+        `تم تغيير صلاحية ${targetId}${nameSuffix} إلى ${roleLabel}.`,
+        managementKeyboard(),
+      );
+      return true;
+    }
+
+    await bot.sendMessage(
+      msg.chat.id,
+      "اختر مستخدم أو مدخل بيانات أو مدير، أو اكتب إلغاء.",
+      roleSelectionKeyboard(),
+    );
+    return true;
+  }
+
+  if (state.step === "reviewing_requests") {
+    const match = text.match(/^\s*(\d+)\s*$/);
+    if (match) {
+      const index = parseInt(match[1], 10) - 1;
+      if (index >= 0 && index < state.requests.length) {
+        const request = state.requests[index];
+        managementStates.set(String(msg.from.id), {
+          step: "choosing_role_for_request",
+          request,
+        });
+        await bot.sendMessage(
+          msg.chat.id,
+          [
+            "مراجعة طلب صلاحية:",
+            "",
+            `الاسم: ${request.display_name || "غير محدد"}`,
+            `الهاتف: ${request.phone || "غير محدد"}`,
+            `Telegram ID: ${request.telegram_id}`,
+            "",
+            "اختر الصلاحية (مستخدم / مدخل بيانات / مدير):",
+          ].join("\n"),
+          reviewRequestKeyboard(),
+        );
+        return true;
+      }
+    }
+    await bot.sendMessage(
+      msg.chat.id,
+      "رقم غير صحيح. أرسل رقم طلب صحيح، أو اكتب إلغاء.",
+      managementKeyboard(),
+    );
+    return true;
+  }
+
+  if (state.step === "choosing_role_for_request") {
+    const request = state.request;
+
+    if (/^مستخدم$/i.test(text)) {
+      const result = await approveAndGrantAccess(
+        request.telegram_id,
+        "user",
+        msg.from.id,
+      );
+      managementStates.delete(String(msg.from.id));
+      if (result) {
+        try {
+          await bot.sendMessage(
+            request.telegram_id,
+            "تمت الموافقة على طلبك! يمكنك الآن استخدام البوت. أرسل /start للبدء.",
+          );
+        } catch (e) {
+          console.error("Could not notify user:", e.message);
+        }
+        await bot.sendMessage(
+          msg.chat.id,
+          `تمت الموافقة على طلب ${result.display_name || request.telegram_id} ومنحه صلاحية user.`,
+          managementKeyboard(),
+        );
+      } else {
+        await bot.sendMessage(
+          msg.chat.id,
+          "تعذّرت الموافقة على الطلب (ربما تمت مراجعته بالفعل).",
+          managementKeyboard(),
+        );
+      }
+      return true;
+    }
+
+    if (/^مدخل بيانات$/i.test(text)) {
+      const result = await approveAndGrantAccess(
+        request.telegram_id,
+        "data-entry",
+        msg.from.id,
+      );
+      managementStates.delete(String(msg.from.id));
+      if (result) {
+        try {
+          await bot.sendMessage(
+            request.telegram_id,
+            "تمت الموافقة على طلبك كمدخل بيانات! يمكنك الآن استخدام البوت. أرسل /start للبدء.",
+          );
+        } catch (e) {
+          console.error("Could not notify user:", e.message);
+        }
+        await bot.sendMessage(
+          msg.chat.id,
+          `تمت الموافقة على طلب ${result.display_name || request.telegram_id} ومنحه صلاحية مدخل بيانات.`,
+          managementKeyboard(),
+        );
+      } else {
+        await bot.sendMessage(
+          msg.chat.id,
+          "تعذّرت الموافقة على الطلب (ربما تمت مراجعته بالفعل).",
+          managementKeyboard(),
+        );
+      }
+      return true;
+    }
+
+    if (/^مدير$/i.test(text)) {
+      const result = await approveAndGrantAccess(
+        request.telegram_id,
+        "super_admin",
+        msg.from.id,
+      );
+      managementStates.delete(String(msg.from.id));
+      if (result) {
+        try {
+          await bot.sendMessage(
+            request.telegram_id,
+            "تمت الموافقة على طلبك كمدير! لديك كل الصلاحيات. أرسل /start للبدء.",
+          );
+        } catch (e) {
+          console.error("Could not notify user:", e.message);
+        }
+        await bot.sendMessage(
+          msg.chat.id,
+          `تمت الموافقة على طلب ${result.display_name || request.telegram_id} ومنحه صلاحية super_admin (مدير).`,
+          managementKeyboard(),
+        );
+      } else {
+        await bot.sendMessage(
+          msg.chat.id,
+          "تعذّرت الموافقة على الطلب (ربما تمت مراجعته بالفعل).",
+          managementKeyboard(),
+        );
+      }
+      return true;
+    }
+
+    if (/^رفض$/i.test(text)) {
+      const result = await rejectAccessRequest(
+        request.telegram_id,
+        msg.from.id,
+      );
+      managementStates.delete(String(msg.from.id));
+      if (result) {
+        try {
+          await bot.sendMessage(
+            request.telegram_id,
+            "تم رفض طلب الصلاحية. للاستفسار، تواصل مع المدير.",
+          );
+        } catch (e) {
+          console.error("Could not notify user:", e.message);
+        }
+        await bot.sendMessage(
+          msg.chat.id,
+          `تم رفض طلب ${result.display_name || request.telegram_id}.`,
+          managementKeyboard(),
+        );
+      } else {
+        await bot.sendMessage(
+          msg.chat.id,
+          "تعذّر رفض الطلب (ربما تمت مراجعته بالفعل).",
+          managementKeyboard(),
+        );
+      }
+      return true;
+    }
+
+    await bot.sendMessage(
+      msg.chat.id,
+      "اختر مستخدم أو مدخل بيانات أو مدير، أو اكتب إلغاء.",
+      reviewRequestKeyboard(),
+    );
+    return true;
+  }
+
+  if (state.step === "awaiting_role") {
+    if (/^مستخدم$/i.test(text)) {
+      managementStates.set(String(msg.from.id), { action: "add_user" });
+      await bot.sendMessage(
+        msg.chat.id,
+        "أرسل Telegram ID للمستخدم:",
+        managementKeyboard(),
+      );
+      return true;
+    }
+    if (/^مدخل بيانات$/i.test(text)) {
+      managementStates.set(String(msg.from.id), { action: "add_admin" });
+      await bot.sendMessage(
+        msg.chat.id,
+        "أرسل Telegram ID لمدخل بيانات:",
+        managementKeyboard(),
+      );
+      return true;
+    }
+    if (/^مدير$/i.test(text)) {
+      managementStates.set(String(msg.from.id), { action: "add_super_admin" });
+      await bot.sendMessage(
+        msg.chat.id,
+        "أرسل Telegram ID للمدير:",
+        managementKeyboard(),
+      );
+      return true;
+    }
+    await bot.sendMessage(
+      msg.chat.id,
+      "اختر مستخدم أو مدخل بيانات أو مدير، أو اكتب إلغاء.",
+      roleSelectionKeyboard(),
+    );
+    return true;
+  }
+
+  if (!isTelegramId(text)) {
+    await bot.sendMessage(
+      msg.chat.id,
+      "أرسل Telegram ID صحيحا كأرقام فقط، أو اكتب رجوع للإلغاء.",
+      managementKeyboard(),
+    );
+    return true;
+  }
+
+  const targetId = text.trim();
+  let message;
+
+  if (state.action === "add_user") {
+    await upsertBotAccessUser(targetId, "user", msg.from.id);
+    message = `تمت إضافة المستخدم ${targetId} للبحث فقط.`;
+  }
+
+  if (state.action === "add_admin") {
+    await upsertBotAccessUser(targetId, "data-entry", msg.from.id);
+    message = `تمت إضافة مدخل بيانات ${targetId}. يستطيع البحث ورفع ملفات Excel وتحديث البيانات.`;
+  }
+
+  if (state.action === "add_super_admin") {
+    await upsertBotAccessUser(targetId, "super_admin", msg.from.id);
+    message = `تمت إضافة المدير ${targetId}. لديه كل الصلاحيات بما فيها إدارة المستخدمين.`;
+  }
+
+  if (state.action === "remove") {
+    if (isMainAdminId(targetId)) {
+      message = "لا يمكن حذف main admin من هنا لأنه موجود في ADMIN_IDS.";
+    } else {
+      const accessUser = await getBotAccessUser(targetId);
+      if (!accessUser) {
+        message = `لم يتم العثور على ${targetId} في قائمة الصلاحيات.`;
+      } else {
+        await removeBotAccessUser(targetId);
+        const existingName = accessUser.display_name
+          ? ` (${accessUser.display_name})`
+          : "";
+        message = `تم حذف ${accessUser.role} ${targetId}${existingName}.`;
+      }
+    }
+  }
+
+  managementStates.delete(String(msg.from.id));
+  await bot.sendMessage(msg.chat.id, message, managementKeyboard());
+  return true;
+}
+
 function valueAt(values, index) {
   return Array.isArray(values) ? values[index] || "" : "";
 }
@@ -207,14 +879,19 @@ async function exportLatestData(bot, chatId, role) {
     ],
     ...profiles.map((profile) => {
       const phones = Array.isArray(profile.phones) ? profile.phones : [];
-      const addresses = Array.isArray(profile.addresses) ? profile.addresses : [];
+      const addresses = Array.isArray(profile.addresses)
+        ? profile.addresses
+        : [];
+
+      const dupPhone = profile.duplicate_check_phone;
+      const otherPhones = phones.filter((p) => p && p !== dupPhone);
 
       return [
-        profile.primary_phone || valueAt(phones, 0),
+        profile.primary_phone || "",
         profile.customer_name || "",
-        profile.duplicate_check_phone || profile.primary_phone || valueAt(phones, 0),
-        valueAt(phones, 1),
-        valueAt(phones, 2),
+        profile.duplicate_check_phone || profile.primary_phone || "",
+        valueAt(otherPhones, 0),
+        valueAt(otherPhones, 1),
         profile.governorate || "",
         profile.zone || "",
         profile.area || "",
@@ -242,7 +919,6 @@ async function exportLatestData(bot, chatId, role) {
     { wch: 45 },
     { wch: 30 },
   ];
-
   XLSX.utils.book_append_sheet(workbook, worksheet, "Data");
 
   const filePath = path.join(
@@ -261,166 +937,29 @@ async function exportLatestData(bot, chatId, role) {
   }
 }
 
-async function searchAndReply(bot, chatId, query, role) {
-  const normalizedPhone = normalizePhone(query);
-  let searchQuery = normalizedPhone;
-
-  if (!searchQuery) {
-    const nameWords = String(query || "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .split(" ")
-      .filter(Boolean);
-
-    if (nameWords.length < 2) {
-      await bot.sendMessage(
-        chatId,
-        "للبحث بالاسم اكتب أول اسمين على الأقل، مثال: محمد أحمد",
-        keyboardForRole(role),
-      );
-      return;
-    }
-
-    searchQuery = nameWords.slice(0, 2).join(" ");
-  }
-
-  const profile = await findCustomerProfile(searchQuery);
-
-  if (!profile) {
-    await bot.sendMessage(
-      chatId,
-      "لا توجد بيانات لهذا الرقم أو الاسم.",
-      keyboardForRole(role),
-    );
-    return;
-  }
-
-  await bot.sendMessage(
-    chatId,
-    formatCustomerProfile(profile),
-    keyboardForRole(role),
-  );
-}
-
-async function showAccessManagement(bot, msg) {
-  await bot.sendMessage(
-    msg.chat.id,
-    [
-      "إدارة المستخدمين:",
-      "",
-      "إضافة مستخدم: يسمح له بالبحث فقط.",
-      "إضافة أدمن: يسمح له بالبحث والتحديث البيانات من Google Sheet.",
-      "حذف مستخدم/أدمن: إزالة الصلاحية من قاعدة البيانات.",
-      "",
-      "الـ main admins الموجودون في ADMIN_IDS لا يمكن حذفهم من هنا.",
-    ].join("\n"),
-    managementKeyboard(),
-  );
-}
-
-async function sendAccessList(bot, msg) {
-  const users = await listBotAccessUsers();
-  const mainAdmins = [...adminIds].map((id) => `main_admin: ${id}`);
-  const dbUsers = users.map((user) => `${user.role}: ${user.telegram_id}`);
-  const lines = [...mainAdmins, ...dbUsers];
-
-  await bot.sendMessage(
-    msg.chat.id,
-    lines.length
-      ? lines.join("\n")
-      : "لا توجد صلاحيات محفوظة في قاعدة البيانات.",
-    managementKeyboard(),
-  );
-}
-
-async function handleManagementState(bot, msg, text) {
-  const state = managementStates.get(String(msg.from.id));
-  if (!state) return false;
-
-  if (/^(رجوع|إلغاء|الغاء)$/i.test(text)) {
-    managementStates.delete(String(msg.from.id));
-    const role = await getRole(msg);
-    await bot.sendMessage(msg.chat.id, "تم الإلغاء.", keyboardForRole(role));
-    return true;
-  }
-
-  if (!isTelegramId(text)) {
-    const normalizedPhone = normalizePhone(text);
-    const lookupText = normalizedPhone || String(text || "").trim();
-    const profile = lookupText ? await findCustomerProfile(lookupText) : null;
-
-    if (profile) {
-      await bot.sendMessage(
-        msg.chat.id,
-        [
-          "تم العثور على عميل بهذا الاسم أو الرقم:",
-          profile.customer_name ? `الاسم: ${profile.customer_name}` : null,
-          Array.isArray(profile.phones) && profile.phones.length
-            ? `الأرقام: ${profile.phones.join(" | ")}`
-            : null,
-          "",
-          "لكن لا يمكن إضافة أو حذف صلاحية Telegram باستخدام اسم العميل أو رقم الهاتف.",
-          "Telegram لا يعطي البوت Telegram ID من رقم الهاتف.",
-          "اطلب من المستخدم إرسال: رقمي",
-          "ثم أرسل Telegram ID هنا.",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        managementKeyboard(),
-      );
-      return true;
-    }
-
-    await bot.sendMessage(
-      msg.chat.id,
-      "أرسل Telegram ID صحيحا، أو اكتب رقم/اسم عميل موجود لعرضه، أو اكتب رجوع للإلغاء.",
-      managementKeyboard(),
-    );
-    return true;
-  }
-
-  const targetId = text.trim();
-  let message;
-
-  if (state.action === "add_user") {
-    await upsertBotAccessUser(targetId, "user", msg.from.id);
-    message = `تمت إضافة المستخدم ${targetId} للبحث فقط.`;
-  }
-
-  if (state.action === "add_admin") {
-    await upsertBotAccessUser(targetId, "admin", msg.from.id);
-    message = `تمت إضافة الأدمن ${targetId}. يستطيع البحث والتحديث البيانات من Google Sheet.`;
-  }
-
-  if (state.action === "remove_user") {
-    const removed = await removeBotAccessUser(targetId, "user");
-    message = removed
-      ? `تم حذف المستخدم ${targetId}.`
-      : `لم يتم العثور على المستخدم ${targetId} بصلاحية user.`;
-  }
-
-  if (state.action === "remove_admin") {
-    if (isMainAdminId(targetId)) {
-      message = "لا يمكن حذف main admin من هنا لأنه موجود في ADMIN_IDS.";
-    } else {
-      const removed = await removeBotAccessUser(targetId, "admin");
-      message = removed
-        ? `تم حذف الأدمن ${targetId}.`
-        : `لم يتم العثور على الأدمن ${targetId} بصلاحية admin.`;
-    }
-  }
-
-  managementStates.delete(String(msg.from.id));
-  await bot.sendMessage(msg.chat.id, message, managementKeyboard());
-  return true;
-}
-
 function registerHandlers(bot, options = {}) {
   const downloadsDir =
     options.downloadsDir || path.join(os.tmpdir(), "telegram-sales-bot");
 
   bot.onText(/^\/start$/, async (msg) => {
     const role = await getRole(msg);
+    if (role === "none") {
+      const existingRequest = await getAccessRequest(String(msg.from.id));
+      let message;
+      if (existingRequest?.status === "pending") {
+        message = "طلبك قيد المراجعة من المدير. سيتم إعلامك عند الموافقة.";
+      } else if (existingRequest?.status === "approved") {
+        message = "تمت الموافقة على طلبك بالفعل. أرسل /start لتحديث القائمة.";
+      } else {
+        message = [
+          "مرحباً! أنت غير مصرح لك باستخدام هذا البوت.",
+          "",
+          "اضغط على زر «طلب صلاحية» لمشاركة جهة اتصالك وإرسال طلب للمدير.",
+        ].join("\n");
+      }
+      await bot.sendMessage(msg.chat.id, message, unauthorizedKeyboard());
+      return;
+    }
     await bot.sendMessage(msg.chat.id, helpText(), keyboardForRole(role));
   });
 
@@ -477,51 +1016,6 @@ function registerHandlers(bot, options = {}) {
       await bot.sendMessage(
         msg.chat.id,
         "تعذر تحميل الإحصائيات. راجع سجلات السيرفر.",
-        keyboardForRole(role),
-      );
-    }
-  });
-
-  bot.onText(/^\/export$/, async (msg) => {
-    const role = await getRole(msg);
-    if (!(await requireImportAccess(bot, msg, role))) return;
-
-    try {
-      await bot.sendMessage(msg.chat.id, "جاري تجهيز ملف Excel...", keyboardForRole(role));
-      await exportLatestData(bot, msg.chat.id, role);
-    } catch (error) {
-      console.error(error);
-      await bot.sendMessage(
-        msg.chat.id,
-        "فشل تصدير البيانات. راجع سجلات السيرفر.",
-        keyboardForRole(role),
-      );
-    }
-  });
-
-  bot.onText(/^\/sync$/, async (msg) => {
-    const role = await getRole(msg);
-    if (!(await requireImportAccess(bot, msg, role))) return;
-
-    try {
-      const chatId = msg.chat.id;
-      const statusMessage = await bot.sendMessage(
-        chatId,
-        "جاري تحديث البيانات من Google Sheet...",
-        keyboardForRole(role),
-      );
-
-      const result = await syncGoogleSheet(
-        upsertCustomerProfiles,
-        deleteCustomerProfilesNotInHashes,
-      );
-
-      await editStatus(bot, statusMessage, result.message, role);
-    } catch (error) {
-      console.error(error);
-      await bot.sendMessage(
-        msg.chat.id,
-        "فشلت التحديث البيانات. راجع سجلات السيرفر.",
         keyboardForRole(role),
       );
     }
@@ -585,6 +1079,11 @@ function registerHandlers(bot, options = {}) {
 
       await upsertCustomerProfiles(profiles);
 
+      // Delete customers that are no longer in the new Excel file
+      // This gives the "replace" behavior: new file completely replaces old data
+      const sourceHashes = profiles.map((p) => p.sourceHash);
+      await deleteCustomerProfilesNotInHashes(sourceHashes);
+
       await editStatus(
         bot,
         statusMessage,
@@ -615,6 +1114,79 @@ function registerHandlers(bot, options = {}) {
       if (downloadedPath) {
         await fs.rm(downloadedPath, { force: true });
       }
+    }
+  });
+
+  bot.on("contact", async (msg) => {
+    const contact = msg.contact;
+    if (!contact) return;
+
+    if (String(contact.user_id) !== String(msg.from.id)) {
+      await bot.sendMessage(
+        msg.chat.id,
+        "يمكنك فقط مشاركة جهة اتصالك الخاصة.",
+        unauthorizedKeyboard(),
+      );
+      return;
+    }
+
+    const displayName =
+      [contact.first_name, contact.last_name]
+        .filter(Boolean)
+        .join(" ")
+        .trim() || null;
+    const phone = normalizePhone(contact.phone_number);
+
+    const { request, isNew } = await upsertAccessRequest(
+      String(contact.user_id),
+      phone,
+      displayName,
+    );
+
+    if (isNew) {
+      await bot.sendMessage(
+        msg.chat.id,
+        [
+          "تم استلام طلبك بنجاح! ✅",
+          "",
+          `الاسم: ${displayName || "غير محدد"}`,
+          `الهاتف: ${phone || "غير محدد"}`,
+          "",
+          "سيتم مراجعة طلبك من المدير. سيصلك إشعار عند الموافقة.",
+        ].join("\n"),
+        unauthorizedKeyboard(),
+      );
+
+      for (const adminId of adminIds) {
+        try {
+          await bot.sendMessage(
+            adminId,
+            [
+              "📥 طلب صلاحية جديد:",
+              "",
+              `الاسم: ${displayName || "غير محدد"}`,
+              `الهاتف: ${phone || "غير محدد"}`,
+              `Telegram ID: ${contact.user_id}`,
+              "",
+              "لمراجعة الطلبات: إدارة المستخدمين ← طلبات الصلاحية",
+            ].join("\n"),
+          );
+        } catch (e) {
+          console.error(`Could not notify admin ${adminId}:`, e.message);
+        }
+      }
+    } else if (request.status === "pending") {
+      await bot.sendMessage(
+        msg.chat.id,
+        "طلبك قيد المراجعة بالفعل. سيتم إعلامك عند الموافقة.",
+        unauthorizedKeyboard(),
+      );
+    } else if (request.status === "approved") {
+      await bot.sendMessage(
+        msg.chat.id,
+        "تمت الموافقة على طلبك بالفعل. أرسل /start لتحديث القائمة.",
+        keyboardForRole(await getRole(msg)),
+      );
     }
   });
 
@@ -656,45 +1228,92 @@ function registerHandlers(bot, options = {}) {
         return;
       }
 
-      if (/^إضافة مستخدم$/i.test(text)) {
+      if (/^طلبات الصلاحية$/i.test(text)) {
         if (!(await requireManagementAccess(bot, msg, role))) return;
-        managementStates.set(String(msg.from.id), { action: "add_user" });
+        const requests = await listPendingAccessRequests();
+        if (requests.length === 0) {
+          await bot.sendMessage(
+            msg.chat.id,
+            "لا توجد طلبات صلاحية معلقة.",
+            managementKeyboard(),
+          );
+          return;
+        }
+        managementStates.set(String(msg.from.id), {
+          step: "reviewing_requests",
+          requests,
+        });
+        const list = requests
+          .map((req, index) => {
+            const name = req.display_name ? ` (${req.display_name})` : "";
+            return `${index + 1}. ${req.telegram_id}${name} — ${req.phone || "بدون هاتف"}`;
+          })
+          .join("\n");
         await bot.sendMessage(
           msg.chat.id,
-          "أرسل Telegram ID للمستخدم.",
+          [
+            "الطلبات المعلقة:",
+            "",
+            list,
+            "",
+            "أرسل رقم الطلب لمراجعته، أو اكتب إلغاء.",
+          ].join("\n"),
           managementKeyboard(),
         );
         return;
       }
 
-      if (/^إضافة أدمن$/i.test(text)) {
+      if (/^إضافة$/i.test(text)) {
         if (!(await requireManagementAccess(bot, msg, role))) return;
-        managementStates.set(String(msg.from.id), { action: "add_admin" });
+        managementStates.set(String(msg.from.id), { step: "awaiting_role" });
         await bot.sendMessage(
           msg.chat.id,
-          "أرسل Telegram ID للأدمن الجديد.",
+          "اختر الصلاحية:",
+          roleSelectionKeyboard(),
+        );
+        return;
+      }
+
+      if (/^ترقيه$/i.test(text)) {
+        if (!(await requireManagementAccess(bot, msg, role))) return;
+        managementStates.set(String(msg.from.id), {
+          step: "awaiting_promotion_target",
+        });
+        await bot.sendMessage(
+          msg.chat.id,
+          [
+            "أرسل Telegram ID أو رقم هاتف أو اسم المستخدم الذي تريد تغيير صلاحيته:",
+            "",
+            "أو اكتب إلغاء للرجوع.",
+          ].join("\n"),
           managementKeyboard(),
         );
         return;
       }
 
-      if (/^حذف مستخدم$/i.test(text)) {
+      if (/^حذف$/i.test(text)) {
         if (!(await requireManagementAccess(bot, msg, role))) return;
-        managementStates.set(String(msg.from.id), { action: "remove_user" });
-        await bot.sendMessage(
-          msg.chat.id,
-          "أرسل Telegram ID للمستخدم المراد حذفه.",
-          managementKeyboard(),
-        );
-        return;
-      }
+        managementStates.set(String(msg.from.id), { action: "remove" });
 
-      if (/^حذف أدمن$/i.test(text)) {
-        if (!(await requireManagementAccess(bot, msg, role))) return;
-        managementStates.set(String(msg.from.id), { action: "remove_admin" });
+        const users = await listBotAccessUsers();
+        const mainAdmins = [...adminIds].map(
+          (id) => `main_admin: ${id} (لا يمكن حذفه)`,
+        );
+        const dbUsers = users.map((user) => {
+          const name = user.display_name ? ` (${user.display_name})` : "";
+          return `${user.role}: ${user.telegram_id}${name}`;
+        });
+        const lines = [...mainAdmins, ...dbUsers];
+
         await bot.sendMessage(
           msg.chat.id,
-          "أرسل Telegram ID للأدمن المراد حذفه.",
+          [
+            "قائمة الصلاحيات الحالية:",
+            "",
+            ...(lines.length ? lines : ["لا يوجد مستخدمون."]),
+            "",
+            "أرسل Telegram ID للحذف، أو اكتب إلغاء.",
+          ].join("\n"),
           managementKeyboard(),
         );
         return;
@@ -731,36 +1350,39 @@ function registerHandlers(bot, options = {}) {
         return;
       }
 
-      if (/^(export|تصدير excel|تصدير Excel)$/i.test(text)) {
+      if (
+        /^(تحميل نسخة من البيانات|تحميل نسخه من البيانات|export)$/i.test(text)
+      ) {
         if (!(await requireImportAccess(bot, msg, role))) return;
-        await bot.sendMessage(chatId, "جاري تجهيز ملف Excel...", keyboardForRole(role));
-        await exportLatestData(bot, chatId, role);
+        try {
+          await bot.sendMessage(
+            chatId,
+            "جاري تجهيز ملف Excel...",
+            keyboardForRole(role),
+          );
+          await exportLatestData(bot, chatId, role);
+        } catch (error) {
+          console.error(error);
+          await bot.sendMessage(
+            chatId,
+            "فشل تصدير البيانات. راجع سجلات السيرفر.",
+            keyboardForRole(role),
+          );
+        }
         return;
       }
 
-      if (/^(sync|تحديث البيانات)$/i.test(text)) {
+      if (/^(رفع ملف Excel|تحدتث البينات|تحدث البيانات)$/i.test(text)) {
         if (!(await requireImportAccess(bot, msg, role))) return;
-        const statusMessage = await bot.sendMessage(
+        await bot.sendMessage(
           chatId,
-          "جاري تحديث البيانات البيانات من Google Sheet...",
+          [
+            "لتحديث البيانات، أرسل ملف Excel (.xlsx) في هذه المحادثة.",
+            "",
+            "سيتم قراءة الملف وحفظ بيانات العملاء في قاعدة البيانات.",
+          ].join("\n"),
           keyboardForRole(role),
         );
-
-        try {
-          const result = await syncGoogleSheet(
-            upsertCustomerProfiles,
-            deleteCustomerProfilesNotInHashes,
-          );
-          await editStatus(bot, statusMessage, result.message, role);
-        } catch (error) {
-          console.error(error);
-          await editStatus(
-            bot,
-            statusMessage,
-            "فشلت التحديث البيانات. راجع سجلات السيرفر.",
-            role,
-          );
-        }
         return;
       }
 
@@ -781,6 +1403,3 @@ function registerHandlers(bot, options = {}) {
 module.exports = {
   registerHandlers,
 };
-
-
-

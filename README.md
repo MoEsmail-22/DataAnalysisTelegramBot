@@ -1,6 +1,6 @@
 # Telegram Arabic Customer Data Bot
 
-Telegram bot that syncs customer data from a Google Sheet into Supabase/PostgreSQL and allows searching customer delivery information by phone number or name.
+Telegram bot that lets admins upload customer data from an Excel file into Supabase/PostgreSQL and allows searching customer delivery information by phone number or name.
 
 ## What It Stores
 
@@ -25,15 +25,14 @@ Create `.env` locally, or add these environment variables in your hosting dashbo
 BOT_TOKEN=your_new_bot_token
 DATABASE_URL=your_supabase_postgres_connection_string
 ADMIN_IDS=123456789,987654321
+TELEGRAM_WEBHOOK_SECRET=use_a_random_private_value_here
 
-# Google Sheets Sync
-GOOGLE_SHEETS_CREDENTIALS={"type":"service_account",...}
-GOOGLE_SHEET_ID=1kc_LVn-KyxUuBhY37rLpC5BvkfCC15MiTbEfLS5055w
-GOOGLE_SHEET_NAME=Data
-SYNC_INTERVAL_MINUTES=10
+# Optional tuning
+DB_UPSERT_CHUNK_SIZE=250
+STORE_RAW_DATA=false
 ```
 
-`ADMIN_IDS` is a comma-separated list of Telegram user IDs. Admins can trigger manual sync and view stats. Normal users can search only.
+`ADMIN_IDS` is a comma-separated list of Telegram user IDs. Admins can upload Excel files and view stats. Normal users can search only.
 
 ## Install
 
@@ -43,7 +42,7 @@ npm install
 
 ## Database
 
-Run `schema.sql` in Supabase SQL Editor before the bot starts syncing data.
+Run `schema.sql` in Supabase SQL Editor before starting the bot.
 
 ## Start Locally
 
@@ -58,65 +57,22 @@ npm start
 - `/myid` - إظهار رقم حسابك
 - `/search phone_or_name` - بحث برقم الهاتف أو الاسم
 - `/stats` - إحصائيات البيانات
-- `/sync` - مزامنة من Google Sheet يدويا
 
 The bot also shows Arabic shortcut buttons:
 
 - بحث
-- مزامنة
+- رفع ملف Excel
 - إحصائيات
 - مساعدة
+- رقمي
 
-## Google Sheets Configuration
+## Excel File Upload
 
-The bot syncs customer data directly from a Google Sheet. Setup is required.
+Admins upload customer data by sending an `.xlsx` file directly in the Telegram chat. The bot downloads the file, parses the rows, and saves them to the database.
 
-### Setup Steps
+### Excel Column Format
 
-1. **Create a Google Cloud Project:**
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project
-
-2. **Enable Google Sheets API:**
-   - In the APIs & Services section, enable "Google Sheets API"
-
-3. **Create a Service Account:**
-   - In APIs & Services → Credentials
-   - Create a new Service Account
-   - Download the JSON key file
-
-4. **Share your Google Sheet:**
-   - Copy the service account email from the JSON file
-   - Share your Google Sheet with that email address (give it Editor access)
-
-5. **Configure Environment Variables:**
-
-   ```env
-   GOOGLE_SHEETS_CREDENTIALS={"type":"service_account","project_id":"...",...}
-   GOOGLE_SHEET_ID=1kc_LVn-KyxUuBhY37rLpC5BvkfCC15MiTbEfLS5055w
-   GOOGLE_SHEET_NAME=Data
-   SYNC_INTERVAL_MINUTES=10
-   ```
-
-   If your environment cannot store the full JSON safely, use a file path instead:
-
-   ```env
-   GOOGLE_SHEETS_CREDENTIALS_PATH=/path/to/service-account.json
-   ```
-
-   Then place the JSON file on the server and do not store the raw key directly in `.env`.
-
-   If the environment cannot safely hold the full JSON, you can instead set:
-
-   ```env
-   GOOGLE_SHEETS_CREDENTIALS_PATH=/path/to/your/service-account.json
-   ```
-
-   Then keep the JSON file on the server and do not store it directly in `.env`.
-
-### Google Sheet Column Format
-
-Your Google Sheet must have these columns (can be in any order):
+Your Excel file must have these columns (can be in any order, headers can be on row 1 or 2):
 
 - `الهاتف 001` - main phone number (primary key for updates)
 - `اسم العميل` - customer name
@@ -131,32 +87,30 @@ Your Google Sheet must have these columns (can be in any order):
 - `العنوان 03` - third address
 - `ملحوظة` - notes
 
-### How Sync Works
+### How Upload Works
 
-1. Bot reads all rows from the specified Google Sheet automatically every 10 minutes
-2. Parses and normalizes the data
-3. Updates the database using the primary phone number (`الهاتف 001`) as the key
-4. Admins can manually trigger sync anytime using `/sync` or مزامنة button
-5. Errors are logged to the server console
+1. Admin taps **رفع ملف Excel** or just sends a `.xlsx` file directly
+2. Bot downloads the file and parses all rows
+3. Data is normalized (Egyptian phone format `01xxxxxxxxx`, Arabic digit conversion)
+4. Database is updated using the primary phone number (`الهاتف 001`) as the key
+5. Bot replies with the count of saved customers
+6. The downloaded file is deleted from the server after processing
 
 ## Deployment
 
-For hosting platforms such as `cloud.tranger.xyz`, push the latest code to GitHub, then redeploy/restart the bot from the hosting dashboard. Make sure the hosting environment variables match the `.env` values above.
+### Vercel webhook deployment
 
-## Recent Updates
+This bot can run on Vercel without polling. Add `BOT_TOKEN`, `DATABASE_URL`, `ADMIN_IDS`, and `TELEGRAM_WEBHOOK_SECRET` as Production environment variables. Deploy the project, then set `WEBHOOK_URL` locally to `https://your-domain.vercel.app/api/webhook` and run `npm run set-webhook`.
 
-- Replaced Excel upload/import flow with direct Google Sheets sync.
-- Added `src/googleSheets.js` to read and normalize rows from a Google Sheet and upsert them into PostgreSQL/Supabase.
-- Added periodic sync (configurable with `SYNC_INTERVAL_MINUTES`) and a manual `/sync` command (admins only).
-- Updated command buttons and help text to remove Excel references and surface the new `مزامنة` (sync) action.
+Use `GET /api/health` to confirm that the Vercel deployment can reach the database. Do not run `npm start` at the same time as the Vercel webhook, otherwise Telegram will report a conflict.
 
 ## Troubleshooting
 
-- "Google Sheet is empty" or "tab not found": verify `GOOGLE_SHEET_NAME` exactly matches the sheet tab title (case and spacing matter). The bot logs available tab names on sync attempts.
+- "لم يتم العثور على صفوف صالحة": check the header row in your Excel file — the bot expects the columns listed above (aliases are flexible but must match one of the known headers).
 - `ETELEGRAM: 409 Conflict`: indicates another bot instance is running (or webhook/polling conflict). Stop other node processes or disable the webhook before starting the bot locally.
-- If manual `/sync` returns no parsed profiles, check the header row in the sheet — the bot expects the columns listed above (aliases are flexible but must match one of the known headers).
+- Phone numbers not matching: ensure phones are in the `الهاتف 001` column. Egyptian numbers are auto-normalized (`+20...`, `20...`, `1xxxxxxxxx` all become `01xxxxxxxxx`).
 
 ## Security Notes
 
-- Do NOT commit your Google service account JSON key to the repository. GitHub push protection will block pushes that contain secrets (and this project has secret scanning enabled).
-- Prefer `GOOGLE_SHEETS_CREDENTIALS_PATH` pointing to a JSON file stored on the server, and keep that file out of version control (add it to `.gitignore`).
+- Keep your `BOT_TOKEN` and `DATABASE_URL` secret. Do not commit `.env` to version control.
+- The `ADMIN_IDS` list controls who has admin access. Only main admins can manage users.
